@@ -7806,6 +7806,8 @@ void death_knight_t::default_apl_unholy()
   generic->add_talent(this, "Dark Arbiter", "if=!equipped.137075&runic_power.deficit<30");
   generic->add_talent(this, "Dark Arbiter", "if=equipped.137075&runic_power.deficit<30&cooldown.dark_transformation.remains<2");
   generic->add_action(this, "Summon Gargoyle", "if=!equipped.137075,if=rune<=3");
+  generic->add_action(this, "Army of the Dead");
+  generic->add_action(this, "Summon Gargoyle", "if=!equipped.137075,if=rune<=3");
   generic->add_action(this, "Summon Gargoyle", "if=equipped.137075&cooldown.dark_transformation.remains<10&rune<=3");
 
   // Apocalypso
