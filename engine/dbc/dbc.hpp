@@ -91,9 +91,6 @@ const gem_property_data_t* gem_properties( bool ptr );
 specialization_e translate_spec_str   ( player_e ptype, const std::string& spec_str );
 std::string specialization_string     ( specialization_e spec );
 double fmt_value( double v, effect_type_t type, effect_subtype_t sub_type );
-const std::string& get_token( unsigned int id_spell );
-bool add_token( unsigned int id_spell, const std::string& token_name, bool ptr );
-unsigned int get_token_id( const std::string& token );
 bool valid_gem_color( unsigned color );
 
 const char* item_name_description( unsigned, bool ptr );
@@ -524,6 +521,7 @@ public:
       case POWER_BURNING_EMBER:
       case POWER_ASTRAL_POWER:
       case POWER_PAIN:
+      case POWER_SOUL_SHARDS:
         return 10.0;
       case POWER_DEMONIC_FURY:
         return percentage ? 0.1 : 1.0;  // X% of 1000 ("base" demonic fury) is X divided by 0.1
@@ -668,6 +666,7 @@ public:
       case RESOURCE_RAGE:
       case RESOURCE_ASTRAL_POWER:
       case RESOURCE_PAIN:
+      case RESOURCE_SOUL_SHARD:
         return base_value() * ( 1 / 10.0 );
       case RESOURCE_INSANITY:
       case RESOURCE_MANA:
@@ -1447,9 +1446,6 @@ public:
 
   const gem_property_data_t* gem_properties() const
   { return dbc::gem_properties( ptr ); }
-
-  bool add_token( unsigned int id_spell, const std::string& token_name ) const
-  { return dbc::add_token( id_spell, token_name, ptr ); }
 
   // Gametables removed in Legion
   double melee_crit_base( player_e, unsigned ) const

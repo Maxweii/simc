@@ -13,9 +13,12 @@
  HEADERS += engine/util/generic.hpp
  HEADERS += engine/util/concurrency.hpp
  HEADERS += engine/util/cache.hpp
+ HEADERS += engine/sim/x7_pantheon.hpp
+ HEADERS += engine/sim/sc_profileset.hpp
  HEADERS += engine/sim/sc_option.hpp
  HEADERS += engine/sim/sc_expressions.hpp
  HEADERS += engine/report/sc_report.hpp
+ HEADERS += engine/player/artifact_data.hpp
  HEADERS += engine/dbc/specialization.hpp
  HEADERS += engine/dbc/dbc.hpp
  PRECOMPILED_HEADER += engine/simulationcraft.hpp
@@ -36,11 +39,13 @@
  SOURCES += engine/util/rng.cpp
  SOURCES += engine/util/io.cpp
  SOURCES += engine/util/concurrency.cpp
+ SOURCES += engine/sim/x7_pantheon.cpp
  SOURCES += engine/sim/sc_sim.cpp
  SOURCES += engine/sim/sc_scaling.cpp
  SOURCES += engine/sim/sc_reforge_plot.cpp
  SOURCES += engine/sim/sc_raid_event.cpp
  SOURCES += engine/sim/sc_progress_bar.cpp
+ SOURCES += engine/sim/sc_profileset.cpp
  SOURCES += engine/sim/sc_plot.cpp
  SOURCES += engine/sim/sc_option.cpp
  SOURCES += engine/sim/sc_gear_stats.cpp
@@ -67,6 +72,7 @@
  SOURCES += engine/player/sc_item.cpp
  SOURCES += engine/player/sc_enchant.cpp
  SOURCES += engine/player/sc_consumable.cpp
+ SOURCES += engine/player/artifact_data.cpp
  SOURCES += engine/interfaces/sc_wowhead.cpp
  SOURCES += engine/interfaces/sc_js.cpp
  SOURCES += engine/interfaces/sc_http.cpp

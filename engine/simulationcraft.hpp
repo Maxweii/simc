@@ -5,8 +5,8 @@
 #ifndef SIMULATIONCRAFT_H
 #define SIMULATIONCRAFT_H
 
-#define SC_MAJOR_VERSION "725"
-#define SC_MINOR_VERSION "01"
+#define SC_MAJOR_VERSION "730"
+#define SC_MINOR_VERSION "03"
 #define SC_VERSION ( SC_MAJOR_VERSION "-" SC_MINOR_VERSION )
 #define SC_BETA 0
 #if SC_BETA
@@ -104,10 +104,11 @@ struct travel_event_t;
 struct xml_node_t;
 class xml_writer_t;
 struct real_ppm_t;
+struct shuffled_rng_t;
+struct ground_aoe_event_t;
 namespace highchart {
   struct chart_t;
 }
-
 
 #include "dbc/data_enums.hh"
 #include "dbc/data_definitions.hh"
@@ -138,6 +139,13 @@ namespace highchart {
 
 // Cache Control ============================================================
 #include "util/cache.hpp"
+
+#include "sim/sc_profileset.hpp"
+
+#include "player/artifact_data.hpp"
+
+// Legion-specific "pantheon trinket" system
+#include "sim/x7_pantheon.hpp"
 
 // Talent Translation =======================================================
 
@@ -204,6 +212,9 @@ struct artifact_power_t
 
   operator const spell_data_t*() const
   { return spell_; }
+
+  const artifact_power_data_t* power() const
+  { return power_; }
 
   double value( size_t idx = 1 ) const
   {
@@ -460,7 +471,7 @@ struct gear_stats_t
     speed_rating += right.speed_rating;
     avoidance_rating += right.avoidance_rating;
     range::transform ( attribute, right.attribute, attribute.begin(), std::plus<double>() );
-    range::transform ( resource, right.resource, resource.begin(), std::plus<int>() );
+    range::transform ( resource, right.resource, resource.begin(), std::plus<double>() );
     return *this;
   }
 
@@ -501,6 +512,7 @@ struct actor_target_data_t : public actor_pair_t, private noncopyable
     buff_t* solar_collapse;
     buff_t* volatile_magic;
     buff_t* maddening_whispers;
+    buff_t* shadow_blades;
   } debuff;
 
   struct atd_dot_t
@@ -1296,7 +1308,7 @@ struct sim_progress_t
   int current_iterations;
   int total_iterations;
   double pct() const
-  { return current_iterations / static_cast<double>(total_iterations); }
+  { return std::min( 1.0, current_iterations / static_cast<double>(total_iterations) ); }
 };
 
 // Progress Bar =============================================================
@@ -1307,15 +1319,35 @@ struct progress_bar_t
   int steps, updates, interval, update_number;
   double start_time, last_update, max_interval_time;
   std::string status;
+  std::string base_str, phase_str;
+  size_t work_index, total_work_;
+  double elapsed_time;
+  size_t time_count;
 
   progress_bar_t( sim_t& s );
   void init();
   bool update( bool finished = false, int index = -1 );
   void output( bool finished = false );
   void restart();
+  void progress();
+  void set_base( const std::string& base );
+  void set_phase( const std::string& phase );
+  void add_simulation_time( double t );
+  size_t current_progress() const;
+  size_t total_work() const;
+  double average_simulation_time() const;
+
+  static std::string format_time( double t );
 private:
+  size_t compute_total_phases();
   bool update_simple( const sim_progress_t&, bool finished, int index );
   bool update_normal( const sim_progress_t&, bool finished, int index );
+
+  size_t n_stat_scaling_players( const std::string& stat ) const;
+  // Compute the number of various option-related phases
+  size_t n_plot_phases() const;
+  size_t n_reforge_plot_phases() const;
+  size_t n_scale_factor_phases() const;
 };
 
 /* Encapsulated Vector
@@ -1525,6 +1557,9 @@ struct sim_t : private sc_thread_t
   double current_error;
   double current_mean;
   int analyze_error_interval, analyze_number;
+  // Clean up memory for threads after iterating (defaults to no in normal operation, some options
+  // will force-enable the option)
+  bool cleanup_threads;
 
   sim_control_t* control;
   sim_t*      parent;
@@ -1653,12 +1688,32 @@ struct sim_t : private sc_thread_t
     // Legion
     int                 infernal_cinders_users;
     int                 engine_of_eradication_orbs;
+    int                 void_stalkers_contract_targets;
+    bool                lavish_feast_as_dps;
+    double              specter_of_betrayal_overlap;
     std::vector<double> cradle_of_anguish_resets;
+    std::string         pantheon_trinket_users;
+    timespan_t          pantheon_trinket_interval;
+    double              pantheon_trinket_interval_stddev;
 
     expansion_opt_t() :
-      infernal_cinders_users( 1 ), engine_of_eradication_orbs( 4 )
+      infernal_cinders_users( 1 ), engine_of_eradication_orbs( 4 ),
+      void_stalkers_contract_targets( -1 ),
+      lavish_feast_as_dps( true ), specter_of_betrayal_overlap( 1.0 ),
+      pantheon_trinket_interval( timespan_t::from_seconds( 1.0 ) ),
+      pantheon_trinket_interval_stddev( 0 )
     { }
   } expansion_opts;
+
+  // Expansion specific data
+  struct expansion_data_t
+  {
+    std::unique_ptr<unique_gear::pantheon_state_t> pantheon_proxy;
+
+    expansion_data_t() :
+      pantheon_proxy( nullptr )
+    { }
+  } expansion_data;
 
   // Auras and De-Buffs
   auto_dispose< std::vector<buff_t*> > buff_list;
@@ -1681,6 +1736,7 @@ struct sim_t : private sc_thread_t
   double     iteration_dmg, priority_iteration_dmg,  iteration_heal, iteration_absorb;
   simple_sample_data_t raid_dps, total_dmg, raid_hps, total_heal, total_absorb, raid_aps;
   extended_sample_data_t simulation_length;
+  double merge_time, init_time, analyze_time;
   // Deterministic simulation iteration data collectors for specific iteration
   // replayability
   std::vector<iteration_data_entry_t> iteration_data, low_iteration_data, high_iteration_data;
@@ -1757,9 +1813,19 @@ struct sim_t : private sc_thread_t
     void batches( size_t n ) { AUTO_LOCK(m); _total_work.resize( n ); _work.resize( n ); _projected_work.resize( n ); }
 
     void flush()          { AUTO_LOCK(m); _total_work[ index ] = _projected_work[ index ] = _work[ index ]; }
-    void project( int w ) { AUTO_LOCK(m); _projected_work[ index ] = w; assert( w >= _work[ index ] ); }
     int  size()           { AUTO_LOCK(m); return index < _total_work.size() ? _total_work[ index ] : _total_work.back(); }
     bool more_work()      { AUTO_LOCK(m); return index < _total_work.size() && _work[ index ] < _total_work[ index ]; }
+
+    void project( int w )
+    {
+      AUTO_LOCK(m);
+      _projected_work[ index ] = w;
+#ifdef NDEBUG
+      if ( w > _work[ index ] )
+      {
+      }
+#endif
+    }
 
     // Single-actor batch pop, uses several indices of work (per active actor), each thread has it's
     // own state on what index it is simulating
@@ -1842,6 +1908,12 @@ struct sim_t : private sc_thread_t
   bool display_hotfixes, disable_hotfixes;
   bool display_bonus_ids;
 
+  // Profilesets
+  opts::map_list_t profileset_map;
+  profileset::profilesets_t profilesets;
+  std::vector<scale_metric_e> profileset_metric;
+  bool profileset_enabled;
+
   sim_t( sim_t* parent = nullptr, int thread_index = 0 );
   virtual ~sim_t();
 
@@ -1871,8 +1943,6 @@ struct sim_t : private sc_thread_t
   void      merge( sim_t& other_sim );
   void      merge();
   bool      iterate();
-  void      set_sim_base_str( const std::string& base );
-  void      update_sim_phase_str();
   void      partition();
   bool      execute();
   void      analyze_error();
@@ -1917,6 +1987,7 @@ private:
   void print_spell_query();
   void enable_debug_seed();
   void disable_debug_seed();
+  bool requires_cleanup() const;
 };
 
 // Module ===================================================================
@@ -2195,6 +2266,36 @@ inline Event* make_event( sim_t& sim, Args&&... args )
   assert( r -> id != 0 && "Event not added to event manager!" );
   return r;
 }
+
+inline event_t* make_event( sim_t& s, const timespan_t& t, const std::function<void(void)>& f )
+{
+  class fn_event_t : public event_t
+  {
+    std::function<void(void)> fn;
+
+    public:
+      fn_event_t( sim_t& s, const timespan_t& t, const std::function<void(void)>& f ) :
+        event_t( s, t ), fn( f )
+      { }
+
+      const char* name() const override
+      { return "function_event"; }
+
+      void execute() override
+      { fn(); }
+  };
+
+  return make_event<fn_event_t>( s, s, t, f );
+}
+
+inline event_t* make_event( sim_t* s, const timespan_t& t, const std::function<void(void)>& f )
+{ return make_event( *s, t, f ); }
+
+inline event_t* make_event( sim_t* s, const std::function<void(void)>& f )
+{ return make_event( *s, timespan_t::zero(), f ); }
+
+inline event_t* make_event( sim_t& s, const std::function<void(void)>& f )
+{ return make_event( s, timespan_t::zero(), f ); }
 
 // Gear Rating Conversions ==================================================
 
@@ -2503,6 +2604,10 @@ struct special_effect_t
   { reset(); }
 
   special_effect_t( const item_t* item );
+
+  // Uses a custom initialization callback or object
+  bool is_custom() const
+  { return custom_init || custom_init_object.size() > 0; }
 
   // Forcefully disable creation of an (autodetected) buff or action. This is necessary in scenarios
   // where the autodetection decides to create an invalid action or buff due to the spell data.
@@ -2896,6 +3001,7 @@ struct set_bonus_t
       case T18:
       case T19:
       case T20:
+      case T21:
         break;
       default:
         assert( 0 && "Attempt to access role-based set bonus through specialization." );
@@ -2991,6 +3097,72 @@ public:
   {
     last_trigger_attempt = timespan_t::from_seconds( -max_interval() );
     last_successful_trigger = initial_precombat_time;
+  }
+
+  bool trigger();
+};
+
+// "Deck of Cards" randomizer helper class ====================================
+// Described at https://www.reddit.com/r/wow/comments/6j2wwk/wow_class_design_ama_june_2017/djb8z68/
+
+struct shuffled_rng_t
+{
+private:
+  player_t*    player;
+  std::string  name_str;
+  int          success_entries;
+  int          total_entries;
+  int          success_entries_remaining;
+  int          total_entries_remaining;
+
+  shuffled_rng_t() : player(nullptr), success_entries(0), total_entries(0), success_entries_remaining(0), total_entries_remaining(0)
+  { }
+
+public:
+
+  shuffled_rng_t(const std::string& name, player_t* p, int success_entries = 0, int total_entries = 0) :
+    player(p),
+    name_str(name),
+    success_entries(success_entries),
+    total_entries(total_entries),
+    success_entries_remaining(success_entries),
+    total_entries_remaining(total_entries)
+  { }
+
+  const std::string& name() const
+  {
+    return name_str;
+  }
+
+  int get_success_entries() const
+  {
+    return success_entries;
+  }
+
+  int get_success_entries_remaining() const
+  {
+    return success_entries_remaining;
+  }
+
+  int get_total_entries() const
+  {
+    return total_entries;
+  }
+
+  int get_total_entries_remaining() const
+  {
+    return total_entries_remaining;
+  }
+
+  double get_remaining_success_chance() const
+  {
+    return (double)success_entries_remaining / (double)total_entries_remaining;
+  }
+
+  void reset()
+  {
+    success_entries_remaining = success_entries;
+    total_entries_remaining = total_entries;
   }
 
   bool trigger();
@@ -3649,7 +3821,7 @@ struct player_t : public actor_t
   bool        initialized;
   bool        potion_used;
 
-  std::string talents_str, id_str, target_str, artifact_str;
+  std::string talents_str, id_str, target_str;
   std::string region_str, server_str, origin_str;
   std::string race_str, professions_str, position_str;
   enum timeofday_e { NIGHT_TIME, DAY_TIME, } timeofday; // Specify InGame time of day to determine Night Elf racial
@@ -3695,35 +3867,7 @@ struct player_t : public actor_t
   std::array<int, PROFESSION_MAX> profession;
 
   // Artifact
-  struct artifact_data_t
-  {
-    std::array<std::pair<uint8_t, uint8_t>, MAX_ARTIFACT_POWER> points;
-    std::array<unsigned, MAX_ARTIFACT_RELIC> relics;
-    unsigned n_points, n_purchased_points;
-    int artifact_; // Hardcoded option to forcibly enable/disable artifact
-    slot_e slot; // Artifact slot, SLOT_NONE if not available
-    const spell_data_t* artificial_stamina;
-    const spell_data_t* artificial_damage;
-
-    artifact_data_t() :
-      n_points( 0 ), n_purchased_points( 0 ), artifact_( -1 ), slot( SLOT_INVALID ),
-      artificial_stamina( spell_data_t::not_found() ),
-      artificial_damage( spell_data_t::not_found() )
-    {
-      range::fill( points, { 0, 0 } );
-      range::fill( relics, 0 );
-    }
-
-    void add_bonus_rank( size_t index, uint8_t n_ranks = 1 )
-    {
-      assert( index < points.size() );
-
-      points[ index ].second += n_ranks;
-      n_points += n_ranks;
-    }
-  } artifact;
-
-  bool artifact_enabled() const;
+  std::unique_ptr<artifact::player_artifact_data_t> artifact;
 
   virtual ~player_t();
 
@@ -3906,6 +4050,7 @@ struct player_t : public actor_t
   auto_dispose< std::vector<uptime_t*> > uptime_list;
   auto_dispose< std::vector<cooldown_t*> > cooldown_list;
   auto_dispose< std::vector<real_ppm_t*> > rppm_list;
+  auto_dispose< std::vector<shuffled_rng_t*> > shuffled_rng_list;
   std::vector<cooldown_t*> dynamic_cooldown_list;
   std::array< std::vector<plot_data_t>, STAT_MAX > dps_plot_data;
   std::vector<std::vector<plot_data_t> > reforge_plot_data;
@@ -3967,6 +4112,7 @@ struct player_t : public actor_t
     buff_t* beacon_of_light;
     buff_t* blood_fury;
     buff_t* body_and_soul;
+    buff_t* damage_done;
     buff_t* darkflight;
     buff_t* devotion_aura;
     buff_t* exhaustion;
@@ -4113,7 +4259,7 @@ struct player_t : public actor_t
 
   virtual void init();
   virtual void override_talent( std::string& override_str );
-  virtual void override_artifact( const std::vector<const artifact_power_data_t*>& powers, const std::string& override_str );
+  virtual void override_artifact( const std::string& override_str );
   virtual void init_meta_gem();
   virtual void init_resources( bool force = false );
   virtual std::string init_use_item_actions( const std::string& append = std::string() );
@@ -4130,7 +4276,7 @@ struct player_t : public actor_t
   void init_character_properties();
   virtual void init_race();
   virtual void init_talents();
-  virtual void init_artifact();
+  virtual bool init_artifact();
   virtual void replace_spells();
   virtual void init_position();
   virtual void init_professions();
@@ -4397,27 +4543,28 @@ struct player_t : public actor_t
   bool is_moving() const { return buffs.movement && buffs.movement -> check(); }
 
   bool parse_talents_numbers( const std::string& talent_string );
+  // Old-style armory format for xx.battle.net / xx.battlenet.com
   bool parse_talents_armory( const std::string& talent_string );
+  // New armory format used in worldofwarcraft.com / www.wowchina.com
+  bool parse_talents_armory2( const std::string& talent_string );
   bool parse_talents_wowhead( const std::string& talent_string );
-
-  bool parse_artifact_wowdb( const std::string& artifact_string );
-  bool parse_artifact_wowhead( const std::string& artifact_string );
 
   void create_talents_numbers();
   void create_talents_armory();
   void create_talents_wowhead();
 
-  const spell_data_t* find_racial_spell( const std::string& name, const std::string& token = std::string(), race_e s = RACE_NONE ) const;
-  const spell_data_t* find_class_spell( const std::string& name, const std::string& token = std::string(), specialization_e s = SPEC_NONE ) const;
-  const spell_data_t* find_pet_spell( const std::string& name, const std::string& token = std::string() ) const;
-  const spell_data_t* find_talent_spell( const std::string& name, const std::string& token = std::string(), specialization_e s = SPEC_NONE, bool name_tokenized = false, bool check_validity = true ) const;
-  const spell_data_t* find_specialization_spell( const std::string& name, const std::string& token = std::string(), specialization_e s = SPEC_NONE ) const;
+  const spell_data_t* find_racial_spell( const std::string& name, race_e s = RACE_NONE ) const;
+  const spell_data_t* find_class_spell( const std::string& name, specialization_e s = SPEC_NONE ) const;
+  const spell_data_t* find_pet_spell( const std::string& name ) const;
+  const spell_data_t* find_talent_spell( const std::string& name, specialization_e s = SPEC_NONE, bool name_tokenized = false, bool check_validity = true ) const;
+  const spell_data_t* find_specialization_spell( const std::string& name, specialization_e s = SPEC_NONE ) const;
   const spell_data_t* find_specialization_spell( unsigned spell_id, specialization_e s = SPEC_NONE ) const;
-  const spell_data_t* find_mastery_spell( specialization_e s, const std::string& token = std::string(), uint32_t idx = 0 ) const;
-  const spell_data_t* find_spell( const std::string& name, const std::string& token = std::string(), specialization_e s = SPEC_NONE ) const;
-  const spell_data_t* find_spell( unsigned int id, const std::string& token = std::string() ) const;
+  const spell_data_t* find_mastery_spell( specialization_e s, uint32_t idx = 0 ) const;
+  const spell_data_t* find_spell( const std::string& name, specialization_e s = SPEC_NONE ) const;
+  const spell_data_t* find_spell( unsigned int id ) const;
 
   artifact_power_t find_artifact_spell( const std::string& name, bool tokenized = false ) const;
+  artifact_power_t find_artifact_spell( unsigned power_id ) const;
 
   virtual expr_t* create_expression( action_t*, const std::string& name );
   expr_t* create_resource_expression( const std::string& name );
@@ -4494,6 +4641,7 @@ struct player_t : public actor_t
   cooldown_t* get_cooldown( const std::string& name );
   real_ppm_t* get_rppm    ( const std::string& name, const spell_data_t* data = spell_data_t::nil(), const item_t* item = nullptr );
   real_ppm_t* get_rppm    ( const std::string& name, double freq, double mod = 1.0, rppm_scale_e s = RPPM_NONE );
+  shuffled_rng_t* get_shuffled_rng(const std::string& name, int success_entries = 0, int total_entries = 0);
   dot_t*      get_dot     ( const std::string& name, player_t* source );
   gain_t*     get_gain    ( const std::string& name );
   proc_t*     get_proc    ( const std::string& name );
@@ -4502,7 +4650,7 @@ struct player_t : public actor_t
   uptime_t*   get_uptime  ( const std::string& name );
   luxurious_sample_data_t* get_sample_data( const std::string& name );
   double      get_player_distance( const player_t& ) const;
-  double      get_ground_aoe_distance( action_state_t& ) const;
+  double      get_ground_aoe_distance( const action_state_t& ) const;
   double      get_position_distance( double m = 0, double v = 0 ) const;
   double avg_item_level() const;
   action_priority_list_t* get_action_priority_list( const std::string& name, const std::string& comment = std::string() );
@@ -4892,7 +5040,7 @@ public:
   virtual const player_t* get_owner_or_self() const override
   { return owner; }
 
-  const spell_data_t* find_pet_spell( const std::string& name, const std::string& token = std::string() );
+  const spell_data_t* find_pet_spell( const std::string& name );
 
   virtual double composite_attribute( attribute_e attr ) const override;
   virtual double composite_player_multiplier( school_e ) const override;
@@ -4946,6 +5094,8 @@ public:
   virtual double composite_melee_attack_power() const override;
 
   virtual double composite_spell_power( school_e school ) const override;
+
+  virtual double composite_player_critical_damage_multiplier( const action_state_t* s ) const override;
 
   // Assuming diminishing returns are transfered to the pet as well
   virtual double composite_dodge() const override
@@ -6234,7 +6384,6 @@ struct spell_base_t : public action_t
 
   // Spell Base Overrides
   virtual timespan_t execute_time() const override;
-  virtual timespan_t tick_time( const action_state_t* state ) const override;
   virtual result_e   calculate_result( action_state_t* ) const override;
   virtual void   execute() override;
   virtual void   schedule_execute( action_state_t* execute_state = nullptr ) override;
@@ -6271,10 +6420,8 @@ public:
   spell_t( const std::string& token, player_t* p, const spell_data_t* s = spell_data_t::nil() );
 
   // Harmful Spell Overrides
-  virtual void   assess_damage( dmg_e, action_state_t* ) override;
   virtual dmg_e amount_type( const action_state_t* /* state */, bool /* periodic */ = false ) const override;
   virtual dmg_e report_amount_type( const action_state_t* /* state */ ) const override;
-  virtual void   execute() override;
   virtual double miss_chance( double hit, player_t* t ) const override;
   virtual void   init() override;
   virtual double composite_hit() const override
@@ -6304,7 +6451,6 @@ public:
   void activate() override;
   virtual double calculate_direct_amount( action_state_t* state ) const override;
   virtual double calculate_tick_amount( action_state_t* state, double dmg_multiplier ) const override;
-  virtual void execute() override;
   player_t* find_greatest_difference_player();
   player_t* find_lowest_player();
   std::vector < player_t* > find_lowest_players( int num_players ) const;
@@ -6373,7 +6519,6 @@ struct absorb_t : public spell_base_t
     return creator();
   }
 
-  virtual void execute() override;
   virtual void assess_damage( dmg_e, action_state_t* ) override;
   virtual dmg_e amount_type( const action_state_t* /* state */, bool /* periodic */ = false ) const override
   { return ABSORB; }
@@ -6861,6 +7006,7 @@ private:
     return false;
   }
 
+protected:
   /**
    * Base rules for proc execution.
    * 1) If we proc a buff, trigger it
@@ -7382,6 +7528,9 @@ bool initialize_special_effect( special_effect_t& effect, unsigned spell_id );
 void initialize_special_effect_fallbacks( player_t* actor );
 // Second-phase special effect initializer
 void initialize_special_effect_2( special_effect_t* effect );
+
+// Initialize generic Artifact traits
+void initialize_artifact_powers( player_t* );
 
 const item_data_t* find_consumable( const dbc_t& dbc, const std::string& name, item_subclass_consumable type );
 const item_data_t* find_item_by_spell( const dbc_t& dbc, unsigned spell_id );
@@ -8006,6 +8155,40 @@ inline bool real_ppm_t::trigger()
   return success;
 }
 
+// Shuffle Proc inlines
+
+inline bool shuffled_rng_t::trigger()
+{
+  if (total_entries <= 0 || success_entries <= 0)
+  {
+    return false;
+  }
+
+  if (total_entries_remaining <= 0)
+  {
+    reset(); // Re-Shuffle the "Deck"
+  }
+
+  bool result = false;
+  if (success_entries_remaining > 0)
+  {
+    result = player->rng().roll(get_remaining_success_chance());
+    if (result)
+    {
+      success_entries_remaining--;
+    }
+  }
+
+  total_entries_remaining--;
+
+  if (total_entries_remaining <= 0)
+  {
+    reset(); // Re-Shuffle the "Deck"
+  }
+
+  return result;
+}
+
 // Instant absorbs
 struct instant_absorb_t
 {
@@ -8097,7 +8280,16 @@ struct ground_aoe_params_t
     PARTIAL_EXPIRATION_PULSE
   };
 
+  enum state_type
+  {
+    EVENT_STARTED = 0,  // Ground aoe event started
+    EVENT_CREATED,      // A new ground_aoe_event_t object created
+    EVENT_DESTRUCTED,   // A ground_aoe_Event_t object destructed
+    EVENT_STOPPED       // Ground aoe event stopped
+  };
+
   using param_cb_t = std::function<void(void)>;
+  using state_cb_t = std::function<void(state_type, ground_aoe_event_t*)>;
 
   player_t* target_;
   double x_, y_;
@@ -8107,6 +8299,7 @@ struct ground_aoe_params_t
   expiration_pulse_type expiration_pulse_;
   unsigned n_pulses_;
   param_cb_t expiration_cb_;
+  state_cb_t state_cb_;
 
   ground_aoe_params_t() :
     target_( nullptr ), x_( -1 ), y_( -1 ), hasted_( NOTHING ), action_( nullptr ),
@@ -8126,6 +8319,7 @@ struct ground_aoe_params_t
   expiration_pulse_type expiration_pulse() const { return expiration_pulse_; }
   unsigned n_pulses() const { return n_pulses_; }
   const param_cb_t& expiration_callback() const { return expiration_cb_; }
+  const state_cb_t& state_callback() const { return state_cb_; }
 
   ground_aoe_params_t& target( player_t* p )
   {
@@ -8185,6 +8379,9 @@ struct ground_aoe_params_t
 
   ground_aoe_params_t& expiration_callback( const param_cb_t& cb )
   { expiration_cb_ = cb; return *this; }
+
+  ground_aoe_params_t& state_callback( const state_cb_t& cb )
+  { state_cb_ = cb; return *this; }
 };
 
 // Delayed expiration callback for groud_aoe_event_t
@@ -8240,12 +8437,22 @@ protected:
       action_t* spell_ = params -> action();
       spell_ -> snapshot_state( pulse_state, spell_ -> amount_type( pulse_state ) );
     }
+
+    if ( params -> state_callback() )
+    {
+      params -> state_callback()( ground_aoe_params_t::EVENT_CREATED, this );
+    }
   }
 public:
   // Make a copy of the parameters, and use that object until this event expires
   ground_aoe_event_t( player_t* p, const ground_aoe_params_t& param, bool immediate_pulse = false ) :
     ground_aoe_event_t( p, new ground_aoe_params_t( param ), nullptr, immediate_pulse )
-  { }
+  {
+    if ( params -> state_callback() )
+    {
+      params -> state_callback()( ground_aoe_params_t::EVENT_STARTED, this );
+    }
+  }
 
   // Cleans up memory for any on-going ground aoe events when the iteration ends, or when the ground
   // aoe finishes during iteration.
@@ -8296,6 +8503,9 @@ public:
 
     return tick;
   }
+
+  timespan_t remaining_time() const
+  { return _time_left( params, player() ); }
 
   bool may_pulse() const
   {
@@ -8377,6 +8587,12 @@ public:
 
     spell_ -> schedule_execute( spell_ -> get_state( pulse_state ) );
 
+    // This event is about to be destroyed, notify callback of the event if needed
+    if ( params -> state_callback() )
+    {
+      params -> state_callback()( ground_aoe_params_t::EVENT_DESTRUCTED, this );
+    }
+
     // Schedule next tick, if it can fit into the duration
     if ( may_pulse() )
     {
@@ -8389,6 +8605,12 @@ public:
     else
     {
       handle_expiration();
+
+      // This event is about to be destroyed, notify callback of the event if needed
+      if ( params -> state_callback() )
+      {
+        params -> state_callback()( ground_aoe_params_t::EVENT_STOPPED, this );
+      }
     }
   }
 

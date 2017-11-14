@@ -276,7 +276,7 @@ void pet_t::combat_begin()
 
 // pet_t::find_pet_spell ====================================================
 
-const spell_data_t* pet_t::find_pet_spell( const std::string& name, const std::string& token )
+const spell_data_t* pet_t::find_pet_spell( const std::string& name )
 {
   unsigned spell_id = dbc.pet_ability_id( type, name.c_str() );
 
@@ -285,10 +285,8 @@ const spell_data_t* pet_t::find_pet_spell( const std::string& name, const std::s
     if ( ! owner )
       return spell_data_t::not_found();
 
-    return owner -> find_pet_spell( name, token );
+    return owner -> find_pet_spell( name );
   }
-
-  dbc.add_token( spell_id, token );
 
   return dbc::find_spell( this, spell_id );
 }
@@ -335,4 +333,14 @@ double pet_t::composite_spell_power( school_e school ) const
   if ( owner_coeff.sp_from_sp > 0.0 )
     sp += owner -> cache.spell_power( school ) * owner -> composite_spell_power_multiplier() * owner_coeff.sp_from_sp;
   return sp;
+}
+
+double pet_t::composite_player_critical_damage_multiplier( const action_state_t* s ) const
+{
+  double m = player_t::composite_player_critical_damage_multiplier( s );
+
+  m *= 1.0 + owner -> racials.brawn -> effectN( 1 ).percent();
+  m *= 1.0 + owner -> racials.might_of_the_mountain -> effectN( 1 ).percent();
+
+  return m;
 }

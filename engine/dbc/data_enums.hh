@@ -15,10 +15,14 @@ enum combat_rating_multiplier_type
 
 enum artifact_trait_type
 {
-  ARTIFACT_TRAIT_NORMAL     = 0,
+  ARTIFACT_TRAIT_MINOR      = 0, // Single-rank minor traits
   ARTIFACT_TRAIT_MAJOR      = 1, // Gold traits
-  ARTIFACT_TRAIT_DAMAGEBUFF = 5, // The trait you get after all others
-  ARTIFACT_TRAIT_INITIAL    = 18
+  ARTIFACT_TRAIT_DAMAGEBUFF2= 2, // Initial trait of the additional trait set
+  ARTIFACT_TRAIT_DAMAGEBUFF = 5, // The trait you get after 35
+  ARTIFACT_TRAIT_PASSIVE    = 8, // Artificial Damage / Stamina:
+  ARTIFACT_TRAIT_INITIAL    = 18,
+  ARTIFACT_TRAIT_MINOR2     = 32,
+  ARTIFACT_TRAIT_RELIC      = 64 // Netherlight traits
 };
 
 enum spell_mechanic {
@@ -527,6 +531,7 @@ enum rating_mod_type {
   RATING_MOD_HASTE_MELEE  = 0x00020000,
   RATING_MOD_HASTE_RANGED = 0x00040000,
   RATING_MOD_HASTE_SPELL  = 0x00080000,
+  RATING_MOD_AVOIDANCE    = 0x00100000,
   RATING_MOD_EXPERTISE    = 0x00800000,
   RATING_MOD_MASTERY      = 0x02000000,
   RATING_MOD_PVP_POWER    = 0x04000000,

@@ -39,40 +39,40 @@ void print_text_action( FILE* file, stats_t* s, int max_name_length,
   if ( s->num_direct_results.mean() > 0 )
   {
     util::fprintf( file, "  Miss=%.2f%%",
-                   s->direct_results[ RESULT_MISS ].pct );
+                   s->direct_results[ FULLTYPE_MISS ].pct );
   }
 
-  if ( s->direct_results[ RESULT_HIT ].actual_amount.sum() > 0 )
+  if ( s->direct_results[ FULLTYPE_HIT ].actual_amount.sum() > 0 )
   {
     util::fprintf( file, "  Hit=%4.0f|%4.0f|%4.0f",
-                   s->direct_results[ RESULT_HIT ].actual_amount.mean(),
-                   s->direct_results[ RESULT_HIT ].actual_amount.min(),
-                   s->direct_results[ RESULT_HIT ].actual_amount.max() );
+                   s->direct_results[ FULLTYPE_HIT ].actual_amount.mean(),
+                   s->direct_results[ FULLTYPE_HIT ].actual_amount.min(),
+                   s->direct_results[ FULLTYPE_HIT ].actual_amount.max() );
   }
-  if ( s->direct_results[ RESULT_CRIT ].actual_amount.sum() > 0 )
+  if ( s->direct_results[ FULLTYPE_CRIT ].actual_amount.sum() > 0 )
   {
     util::fprintf( file, "  Crit=%5.0f|%5.0f|%5.0f|%.1f%%",
-                   s->direct_results[ RESULT_CRIT ].actual_amount.mean(),
-                   s->direct_results[ RESULT_CRIT ].actual_amount.min(),
-                   s->direct_results[ RESULT_CRIT ].actual_amount.max(),
-                   s->direct_results[ RESULT_CRIT ].pct );
+                   s->direct_results[ FULLTYPE_CRIT ].actual_amount.mean(),
+                   s->direct_results[ FULLTYPE_CRIT ].actual_amount.min(),
+                   s->direct_results[ FULLTYPE_CRIT ].actual_amount.max(),
+                   s->direct_results[ FULLTYPE_CRIT ].pct );
   }
-  if ( s->direct_results[ RESULT_GLANCE ].actual_amount.sum() > 0 )
+  if ( s->direct_results[ FULLTYPE_GLANCE ].actual_amount.sum() > 0 )
   {
     util::fprintf(
         file, "  Glance=%4.0f|%.1f%%",
-        s->direct_results[ RESULT_GLANCE ].actual_amount.pretty_mean(),
-        s->direct_results[ RESULT_GLANCE ].pct );
+        s->direct_results[ FULLTYPE_GLANCE ].actual_amount.pretty_mean(),
+        s->direct_results[ FULLTYPE_GLANCE ].pct );
   }
-  if ( s->direct_results[ RESULT_DODGE ].count.sum() > 0 )
+  if ( s->direct_results[ FULLTYPE_DODGE ].count.sum() > 0 )
   {
     util::fprintf( file, "  Dodge=%.1f%%",
-                   s->direct_results[ RESULT_DODGE ].pct );
+                   s->direct_results[ FULLTYPE_DODGE ].pct );
   }
-  if ( s->direct_results[ RESULT_PARRY ].count.sum() > 0 )
+  if ( s->direct_results[ FULLTYPE_PARRY ].count.sum() > 0 )
   {
     util::fprintf( file, "  Parry=%.1f%%",
-                   s->direct_results[ RESULT_PARRY ].pct );
+                   s->direct_results[ FULLTYPE_PARRY ].pct );
   }
 
   if ( s->num_ticks.sum() > 0 )
@@ -623,7 +623,7 @@ void print_text_iteration_data( FILE* file, sim_t* sim )
   }
 
   size_t n_spacer =
-      ( sim->num_enemies - 1 ) * 10 + ( sim->num_enemies - 2 ) * 2 + 2;
+      ( sim->target_list.size() - 1 ) * 10 + ( sim->target_list.size() - 2 ) * 2 + 2;
   std::string spacer_str_1( n_spacer, '-' ), spacer_str_2( n_spacer, ' ' );
 
   util::fprintf( file, "\nIteration data:\n" );
@@ -694,19 +694,19 @@ void print_text_iteration_data( FILE* file, sim_t* sim )
   else
   {
     util::fprintf( file,
-                   ".-----------------------------------------------%s.\n",
+                   ".--------------------------------------------------------%s.\n",
                    spacer_str_1.c_str() );
     util::fprintf( file,
-                   "| Iteration Data                                %s|\n",
+                   "| Iteration Data                                         %s|\n",
                    spacer_str_2.c_str() );
     util::fprintf( file,
-                   "+-----------+----------------------+------------%s+\n",
+                   "+--------+-----------+----------------------+------------%s+\n",
                    spacer_str_1.c_str() );
     util::fprintf( file,
-                   "|    Metric |                 Seed |  %sHealth(s) |\n",
+                   "|  Iter# |    Metric |                 Seed |  %sHealth(s) |\n",
                    spacer_str_2.c_str() );
     util::fprintf( file,
-                   "+-----------+----------------------+------------%s+\n",
+                   "+--------+-----------+----------------------+------------%s+\n",
                    spacer_str_1.c_str() );
 
     for ( size_t i = 0; i < sim->iteration_data.size(); i++ )
@@ -725,12 +725,13 @@ void print_text_iteration_data( FILE* file, sim_t* sim )
         }
       }
 
-      util::fprintf( file, "| %9.1f | %20llu | %s |\n",
+      util::fprintf( file, "| %6llu | %9.1f | %20llu | %s |\n",
+                     sim->iteration_data[ i ].iteration,
                      sim->iteration_data[ i ].metric,
                      sim->iteration_data[ i ].seed, health_s.str().c_str() );
     }
     util::fprintf( file,
-                   "'-----------+----------------------+------------%s'\n",
+                   "'--------+-----------+----------------------+------------%s'\n",
                    spacer_str_1.c_str() );
   }
 }
@@ -769,13 +770,16 @@ void print_text_performance( FILE* file, sim_t* sim )
 #ifdef EVENT_QUEUE_DEBUG
       "  AllocEvents   = %u\n"
       "  EndInsert     = %u (%.3f%%)\n"
-      "  MaxQueueDepth = %u\n"
-      "  AvgQueueDepth = %.3f\n"
+      "  MaxTravDepth  = %u\n"
+      "  AvgTravDepth  = %.3f\n"
 #endif
       "  TargetHealth  = %.0f\n"
       "  SimSeconds    = %.0f\n"
       "  CpuSeconds    = %.3f\n"
       "  WallSeconds   = %.3f\n"
+      "  InitSeconds   = %.6f\n"
+      "  MergeSeconds  = %.6f\n"
+      "  AnalyzeSeconds= %.6f\n"
       "  SpeedUp       = %.0f\n"
       "  EndTime       = %s (%.0f)\n\n",
       sim->rng().name(), sim->deterministic ? " (deterministic)" : "",
@@ -794,6 +798,9 @@ void print_text_performance( FILE* file, sim_t* sim )
       sim->target->resources.base[ RESOURCE_HEALTH ],
       sim->iterations * sim->simulation_length.mean(), sim->elapsed_cpu,
       sim->elapsed_time,
+      sim->init_time,
+      sim->merge_time,
+      sim->analyze_time,
       sim->iterations * sim->simulation_length.mean() / sim->elapsed_cpu,
       date_str, static_cast<double>( cur_time ) );
 #ifdef EVENT_QUEUE_DEBUG
@@ -814,10 +821,12 @@ void print_text_performance( FILE* file, sim_t* sim )
                 static_cast<double>(
                     sim->event_mgr.event_queue_depth_samples[ i ].second ) /
                 sim->event_mgr.event_queue_depth_samples[ i ].first;
-    util::fprintf( file, "Depth: %-4u Samples: %-7u (%.3f%% / %.3f%%)\n", i,
-                   sim->event_mgr.event_queue_depth_samples[ i ].first, p, p2 );
-
     total_p += p;
+    util::fprintf( file, "Depth: %-4u Samples: %-9u (%6.3f%% / %7.3f%%) tail-inserts: %-9u (%6.3f%%)\n", i,
+                   sim->event_mgr.event_queue_depth_samples[ i ].first, p, total_p,
+				   sim->event_mgr.event_queue_depth_samples[ i ].second, p2 );
+
+
   }
   util::fprintf( file, "Total: %.3f%% Samples: %llu\n", total_p,
                  sim->event_mgr.events_added );
@@ -844,6 +853,7 @@ void print_text_performance( FILE* file, sim_t* sim )
 
   util::fprintf( file, "Total: %.3f%% Alloc Samples: %llu\n", total_p,
                  sim->event_mgr.n_requested_events );
+  util::fprintf( file, "Alloc size used for event_t: %u\n", util::next_power_of_two( 2 * sizeof( event_t ) ) );
 #endif
 }
 
@@ -1198,8 +1208,10 @@ void print_text_player( FILE* file, player_t* p )
     util::fprintf( file, "  Origin: %s\n", p->origin_str.c_str() );
   if ( !p->talents_str.empty() )
     util::fprintf( file, "  Talents: %s\n", p->talents_str.c_str() );
-  if ( !p->artifact_str.empty() )
-    util::fprintf( file, "  Artifact: %s\n", p->artifact_str.c_str() );
+  if ( p->artifact && !p->artifact->artifact_option_string().empty() )
+    util::fprintf( file, "  Artifact: %s\n", p->artifact->crucible_option_string().c_str() );
+  if ( p->artifact && !p->artifact->crucible_option_string().empty() )
+    util::fprintf( file, "  Crucible: %s\n", p->artifact->crucible_option_string().c_str() );
   print_text_core_stats( file, p );
   print_text_generic_stats( file, p );
   print_text_spell_stats( file, p );
@@ -1326,11 +1338,14 @@ void print_text_report( FILE* file, sim_t* sim, bool detail )
     }
   }
 
+  sim -> profilesets.output( *sim, file );
+
+  print_text_performance( file, sim );
+
   if ( detail )
   {
     print_text_waiting_all( file, sim );
     print_text_iteration_data( file, sim );
-    print_text_performance( file, sim );
     print_text_scale_factors( file, sim );
     print_text_reference_dps( file, sim );
     print_text_monitor_cpu( file, sim );
@@ -1367,6 +1382,11 @@ void print_text( sim_t* sim, bool detail )
   try
   {
     Timer t( "text report" );
+    if ( ! sim -> profileset_enabled )
+    {
+      t.start();
+    }
+
     print_text_report( text_out, sim, detail );
   }
   catch ( const std::exception& e )

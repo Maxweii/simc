@@ -24,7 +24,7 @@ enum retarget_event_e
 enum
 {
 
-  MAX_ARTIFACT_POWER = 25, /// Maximum number of artifact perks per weapon. Looks like max is 17 on weapons but setting higher just in case -- 2016/04/04 - Twintop. Increase to 25 to encompass new traits.
+  MAX_ARTIFACT_POWER = 29, /// Maximum number of artifact perks per weapon. Looks like max is 17 on weapons but setting higher just in case -- 2016/04/04 - Twintop. Increase to 25 to encompass new traits.
 
   MAX_ARTIFACT_RELIC = 4,
   RELIC_ILEVEL_BONUS_CURVE = 1718, /// Seemingly hard coded CurvePoint identifier for the data that returns the item level increase of a relic, based on the relic's own item level
@@ -446,6 +446,7 @@ enum special_effect_source_e
   SPECIAL_EFFECT_SOURCE_ADDON,
   SPECIAL_EFFECT_SOURCE_GEM,
   SPECIAL_EFFECT_SOURCE_SOCKET_BONUS,
+  SPECIAL_EFFECT_SOURCE_ARTIFACT,
   SPECIAL_EFFECT_SOURCE_FALLBACK
 };
 
@@ -701,8 +702,8 @@ enum slot_e  // these enum values match armory settings
   SLOT_MIN       = 0
 };
 
-// Tiers 13..19 + PVP
-const unsigned N_TIER   = 8;
+// Tiers 13..21 + PVP
+const unsigned N_TIER   = 9;
 const unsigned MIN_TIER = 13;
 
 // Set bonus .. bonus. They map to a vector internally, so each enum value is just the vector
@@ -745,6 +746,7 @@ enum set_bonus_type_e
   T18,
   T19,
   T20,
+  T21,
 
   SET_BONUS_MAX
 };
@@ -1112,31 +1114,38 @@ enum power_e
 // New stuff
 enum snapshot_state_e
 {
-  STATE_HASTE = 0x000001,
-  STATE_CRIT  = 0x000002,
-  STATE_AP    = 0x000004,
-  STATE_SP    = 0x000008,
+  STATE_HASTE          = 0x000001,
+  STATE_CRIT           = 0x000002,
+  STATE_AP             = 0x000004,
+  STATE_SP             = 0x000008,
 
   STATE_MUL_DA         = 0x000010,
   STATE_MUL_TA         = 0x000020,
   STATE_VERSATILITY    = 0x000040,
   STATE_MUL_PERSISTENT = 0x000080,  // Persistent modifier for the few abilities that snapshot
 
-  STATE_TGT_CRIT   = 0x000100,
-  STATE_TGT_MUL_DA = 0x000200,
-  STATE_TGT_MUL_TA = 0x000400,
+  STATE_TGT_CRIT       = 0x000100,
+  STATE_TGT_MUL_DA     = 0x000200,
+  STATE_TGT_MUL_TA     = 0x000400,
 
-  STATE_USER_1 = 0x001000,
-  STATE_USER_2 = 0x002000,
-  STATE_USER_3 = 0x004000,
-  STATE_USER_4 = 0x008000,
+  // User-defined state flags
+  STATE_USER_1         = 0x001000,
+  STATE_USER_2         = 0x002000,
+  STATE_USER_3         = 0x004000,
+  STATE_USER_4         = 0x008000,
 
-  STATE_TGT_MITG_DA = 0x010000,
-  STATE_TGT_MITG_TA = 0x020000,
-  STATE_TGT_ARMOR   = 0x040000,
+  STATE_TGT_MITG_DA    = 0x010000,
+  STATE_TGT_MITG_TA    = 0x020000,
+  STATE_TGT_ARMOR      = 0x040000,
 
   /// Multiplier from the owner to pet damage
-  STATE_MUL_PET = 0x080000,
+  STATE_MUL_PET        = 0x080000,
+
+  // User-defined target-specific state flags
+  STATE_TGT_USER_1     = 0x10000000,
+  STATE_TGT_USER_2     = 0x20000000,
+  STATE_TGT_USER_3     = 0x40000000,
+  STATE_TGT_USER_4     = 0x80000000,
 
   /**
    * No multiplier helper, use in action_t::init() (after parent init) by issuing snapshot_flags &= STATE_NO_MULTIPLIER
@@ -1147,7 +1156,8 @@ enum snapshot_state_e
 
   /// Target-specific state variables
   STATE_TARGET =
-      ( STATE_TGT_CRIT | STATE_TGT_MUL_DA | STATE_TGT_MUL_TA | STATE_TGT_ARMOR | STATE_TGT_MITG_DA | STATE_TGT_MITG_TA )
+      ( STATE_TGT_CRIT | STATE_TGT_MUL_DA | STATE_TGT_MUL_TA | STATE_TGT_ARMOR | STATE_TGT_MITG_DA | STATE_TGT_MITG_TA |
+        STATE_TGT_USER_1 | STATE_TGT_USER_2 | STATE_TGT_USER_3 | STATE_TGT_USER_4 )
 };
 
 enum ready_e

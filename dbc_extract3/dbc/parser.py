@@ -37,7 +37,7 @@ def _do_parse(unpackers, data, record_offset, record_size):
     return full_data
 
 class DBCacheParser:
-    __expanded_parsers__ = [ 'SpellEffect' ]
+    __expanded_parsers__ = [ 'SpellEffect', 'Spell' ]
 
     def is_magic(self): return self.magic == b'XFTH'
 
@@ -118,6 +118,10 @@ class DBCacheParser:
         n_entries = 0
         while self.parse_offset < len(self.data):
             magic, unk_1, unk_2, length, sig, record_id, unk_3 = entry_unpacker.unpack_from(self.data, self.parse_offset)
+            if magic != b'XFTH':
+                logging.error('Invalid hotfix magic %s', magic.decode('utf-8'))
+                return False
+
             self.parse_offset += entry_unpacker.size
             if length == 0:
                 continue
@@ -145,9 +149,9 @@ class DBCacheParser:
         return True
 
     def parse_header(self):
-        header_unpack = struct.Struct('4sii')
+        header_unpack = struct.Struct('4sii32s')
 
-        self.magic, self.unk_1, self.build = header_unpack.unpack_from(self.data)
+        self.magic, self.unk_1, self.build, self.unk_u256 = header_unpack.unpack_from(self.data)
 
         if not self.is_magic():
             logging.error('DBCache.bin: Invalid data file format %s', self.magic.decode('utf-8'))
@@ -224,6 +228,9 @@ class DBCParserBase:
             self.record_parser = self.create_raw_parser()
         else:
             self.record_parser = self.create_formatted_parser(self.use_inline_strings())
+
+        if self.record_parser == None:
+            return False
 
         return True
 
@@ -310,6 +317,7 @@ class DBCParserBase:
     # field structure is going to be coherent automatically.
     def create_expanded_parser(self, inline_strings):
         field_idx = 0
+        field_data_idx = 0
         format_str = '<'
         unpackers = []
 
@@ -333,7 +341,7 @@ class DBCParserBase:
                         if len(format_str) > 1:
                             unpackers.append((False, struct.Struct(format_str)))
                             format_str = '<'
-                        unpackers.append((False, StringUnpacker(field_size)))
+                        unpackers.append((False, StringUnpacker(4)))
                 # Normal (unsigned) byte/short/int/float field, apply to Struct
                 # parser as an unsigned or signed integer (4bytes), or directly
                 # as float.
@@ -346,6 +354,7 @@ class DBCParserBase:
                         format_str += field_format.data_type
 
                 field_idx += 1
+            field_data_idx += 1
 
         if len(format_str) > 1:
             unpackers.append((False, struct.Struct(format_str)))
@@ -436,7 +445,7 @@ class DBCParserBase:
         # One parser unpackers don't need to go through a function, can just do
         # the parsing in one go through a lambda function. Multi-parsers require state to be kept.
         if len(unpackers) == 1:
-            return lambda data, ro, rs: unpackers[0][1].unpack_from(data, ro)
+            return lambda data, ro, rs: list(unpackers[0][1].unpack_from(data, ro))
         else:
             return lambda data, ro, rs: _do_parse(unpackers, data, ro, rs)
 
@@ -946,7 +955,7 @@ class WDB6RecordParser:
         idx = 0
         for i in range(0, len(self.fields)):
             value = self.parser.get_field_value(i, data[self.id_index])
-            if idx < len(data) -1:
+            if idx < len(data):
                 if value != None:
                     data[idx] = value
             else:

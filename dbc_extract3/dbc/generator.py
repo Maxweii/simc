@@ -396,7 +396,8 @@ class RealPPMModifierGenerator(DataGenerator):
         self._specmap = { 0: 'SPEC_NONE' }
 
     def initialize(self):
-        DataGenerator.initialize(self)
+        if not DataGenerator.initialize(self):
+            return False
 
         for i, data in self._chrspecialization_db.items():
             if data.class_id > 0:
@@ -1229,8 +1230,24 @@ class SpellDataGenerator(DataGenerator):
          191259,
          # 7.1.5 Entwined Elemental Foci buffs
          225729, 225730,
+		 # 7.1.5 Archimonde's Hatred Reborn damage spell 
+         235188,
          # 7.2.0 Dreadstone of Endless Shadows stat buffs
-         238499, 238500, 238501
+         238499, 238500, 238501,
+         # 7.3.0 Netherlight stuff
+         252879, 252896, 253098, 253073,
+         # 7.3.0 Acrid Catalyst Injector stat buffs
+         255742, 255744,
+         # 7.3.0 Sheath of Asara
+         255870, 257702,
+         # 7.3.0 Terminus Signaling Beacon
+         257376,
+         # 7.3.0 Gorshalach's Legacy
+         255672,
+         # 7.3.0 Forgefiend's Fabricator
+         253322, 256025, 
+         # 7.3.2 Norgannon pantheon "random school" nukes
+         257243, 257532, 257241, 257242, 257534, 257533,
         ),
 
         # Warrior:
@@ -1360,6 +1377,7 @@ class SpellDataGenerator(DataGenerator):
           ( 212333, 5 ),    # Cleaver for Sludge Belcher
           ( 212332, 5 ),    # Smash for Sludge Belcher
           ( 212338, 5 ),    # Vile Gas for Sludge Belcher
+		  ( 212337, 5 ),	# Powerful Smash for Sludge Belcher
           ( 198715, 5 ),    # Val'kyr Strike for Dark Arbiter
           ( 211947, 0 ),    # Shadow Empowerment for Dark Arbiter
           ( 81141, 0 ),     # Crimson Scourge buff
@@ -1371,6 +1389,7 @@ class SpellDataGenerator(DataGenerator):
           ( 205164, 0 ),    # Crystalline Swords
           ( 205165, 0 ),    # More crystalline swords stuff
           ( 191730, 0 ), ( 191727, 0 ), ( 191728, 0 ), ( 191729, 0 ), # Armies of the Damned debuffs
+          ( 253590, 0 ),    # T21 4P frost damage component
         ),
 
         # Shaman:
@@ -1409,6 +1428,7 @@ class SpellDataGenerator(DataGenerator):
           ( 198506, 0 ),                                # Wolves of Doom, summon spell
           ( 197568, 0 ),                                # Lightning Rod damage spell
           ( 207998, 0 ), ( 207999, 0 ),                 # 7.0 legendary ring Eye of the Twisting Nether
+          ( 252143, 0 ),                                # Earth Shock Overload (Elemental T21 2PC)
         ),
 
         # Mage:
@@ -1436,6 +1456,8 @@ class SpellDataGenerator(DataGenerator):
           ( 222305, 0 ),                            # Sorcerous Fireball
           ( 222320, 0 ),                            # Sorcerous Frostbolt
           ( 222321, 0 ),                            # Sorcerous Arcane Blast
+          ( 205473, 0 ),                            # Icicles buff
+          ( 253257, 0 ),                            # Frost T21 4P Arctic Blast
         ),
 
         # Warlock:
@@ -1551,7 +1573,7 @@ class SpellDataGenerator(DataGenerator):
           ( 225102, 0 ), # Fel Eruption damage
 
           # Havoc
-          ( 203557, 1 ), # Felblade proc rate
+          ( 236167, 1 ), # Felblade proc rate
           ( 208605, 1 ), # Nemesis player buff
           ( 203796, 1 ), # Demon Blade proc
           ( 217070, 1 ), # Rage of the Illidari explosion
@@ -1561,8 +1583,10 @@ class SpellDataGenerator(DataGenerator):
           ( 211796, 1 ), # Chaos Blades damage spell
 
           # Vengeance
+          ( 203557, 2 ), # Felblade proc rate
           ( 209245, 2 ), # Fiery Brand damage reduction
           ( 213011, 2 ), # Charred Warblades heal
+          ( 212818, 2 ), # Fiery Demise debuff
        ),
     ]
 
@@ -1789,8 +1813,12 @@ class SpellDataGenerator(DataGenerator):
         else:
             self._dbc.append('ItemSparse')
 
+        if self._options.build >= 24651:
+            self._dbc.append('RelicTalent')
+
     def initialize(self):
-        super().initialize()
+        if not super().initialize():
+            return False
 
         if self._data_store:
             self._data_store.link('SpellEffect',        'id_spell', 'Spell', 'add_effect'   )
@@ -2540,7 +2568,7 @@ class SpellDataGenerator(DataGenerator):
             power_rank = spell.get_link('artifact_power')
             power = self._artifactpower_db[power_rank.id_power]
             artifact = self._artifact_db[power.id_artifact]
-            if power_rank.index == 0 and artifact.id_spec != 0:
+            if power.id != 0:
                 fields += spell.get_link('artifact_power').field('id_power')
             else:
                 fields += self._artifactpowerrank_db[0].field('id_power')
@@ -3552,6 +3580,11 @@ class SetBonusListGenerator(DataGenerator):
             'name'   : 'tier20',
             'bonuses': [ 1301, 1302, 1303, 1304, 1305, 1306, 1307, 1308, 1309, 1310, 1311, 1312 ],
             'tier'   : 20
+        },
+        {
+            'name'   : 'tier21',
+            'bonuses': [ 1319, 1320, 1321, 1322, 1323, 1324, 1325, 1326, 1327, 1328, 1329, 1330 ],
+            'tier'   : 21
         }
     ]
 
@@ -4159,6 +4192,9 @@ class ArtifactDataGenerator(DataGenerator):
     def __init__(self, options, data_store = None):
         self._dbc = [ 'Artifact', 'ArtifactPower', 'ArtifactPowerRank', 'Spell' ]
 
+        if options.build >= 24651:
+            self._dbc.append('RelicTalent')
+
         super().__init__(options, data_store)
 
     def filter(self):
@@ -4178,6 +4214,15 @@ class ArtifactDataGenerator(DataGenerator):
 
             ids[artifact_id][id] = { 'data': data, 'ranks': [] }
 
+        if self._options.build >= 24641:
+            ids[0] = { }
+            for id, data in self._relictalent_db.items():
+                if data.id_power == 0:
+                    continue
+
+                power_data = self._artifactpower_db[data.id_power]
+                ids[0][data.id_power] = { 'data': power_data, 'ranks': [] }
+
         for id, data in self._artifactpowerrank_db.items():
             power_id = data.id_power
             power = self._artifactpower_db[power_id]
@@ -4185,6 +4230,12 @@ class ArtifactDataGenerator(DataGenerator):
                 continue
 
             if power.id_artifact not in ids:
+                continue
+
+            if power_id not in ids[power.id_artifact]:
+                continue
+
+            if self._spell_db[data.id_spell].id != data.id_spell:
                 continue
 
             ids[power.id_artifact][power_id]['ranks'].append(data)
@@ -4197,13 +4248,16 @@ class ArtifactDataGenerator(DataGenerator):
             self._options.suffix and ('_%s' % self._options.suffix) or '',
         )
 
-        self._out.write('#define %s_SIZE (%d)\n\n' % (data_str.upper(), len(ids.keys()) + 1))
+        artifact_keys = sorted(ids.keys())
+        if artifact_keys[0] == 0:
+            del artifact_keys[0]
+
+        self._out.write('#define %s_SIZE (%d)\n\n' % (data_str.upper(), len(artifact_keys) + 1))
 
         self._out.write('// Artifact base data, wow build %d\n' % ( self._options.build ))
 
         self._out.write('static struct artifact_t __%s_data[%s_SIZE] = {\n' % (data_str, data_str.upper()))
 
-        artifact_keys = sorted(ids.keys())
         powers = []
         for key in artifact_keys + [0]:
             data = self._artifact_db[key]
@@ -4213,7 +4267,7 @@ class ArtifactDataGenerator(DataGenerator):
                 for _, power_data in ids[key].items():
                     powers.append(power_data)
 
-        self._out.write('};\n')
+        self._out.write('};\n\n')
 
         data_str = "%sartifact_power%s" % (
             self._options.prefix and ('%s_' % self._options.prefix) or '',
@@ -4235,6 +4289,7 @@ class ArtifactDataGenerator(DataGenerator):
                 fields += spell.field('name')
                 self._out.write('  { %s }, // %s (id=%u, n_ranks=%u)\n' % (', '.join(fields), spell.name, power['ranks'][0].id_spell, len(power['ranks'])))
             else:
+                spell = self._spell_db[0]
                 fields += spell.field('id')
                 fields += self._spell_db[0].field('name')
                 self._out.write('  { %s },\n' % (', '.join(fields)))

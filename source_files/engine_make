@@ -13,9 +13,12 @@ SRC += \
     util$(PATHSEP)generic.hpp \
     util$(PATHSEP)concurrency.hpp \
     util$(PATHSEP)cache.hpp \
+    sim$(PATHSEP)x7_pantheon.hpp \
+    sim$(PATHSEP)sc_profileset.hpp \
     sim$(PATHSEP)sc_option.hpp \
     sim$(PATHSEP)sc_expressions.hpp \
     report$(PATHSEP)sc_report.hpp \
+    player$(PATHSEP)artifact_data.hpp \
     dbc$(PATHSEP)specialization.hpp \
     dbc$(PATHSEP)dbc.hpp \
     simulationcraft.hpp \
@@ -35,11 +38,13 @@ SRC += \
     util$(PATHSEP)rng.cpp \
     util$(PATHSEP)io.cpp \
     util$(PATHSEP)concurrency.cpp \
+    sim$(PATHSEP)x7_pantheon.cpp \
     sim$(PATHSEP)sc_sim.cpp \
     sim$(PATHSEP)sc_scaling.cpp \
     sim$(PATHSEP)sc_reforge_plot.cpp \
     sim$(PATHSEP)sc_raid_event.cpp \
     sim$(PATHSEP)sc_progress_bar.cpp \
+    sim$(PATHSEP)sc_profileset.cpp \
     sim$(PATHSEP)sc_plot.cpp \
     sim$(PATHSEP)sc_option.cpp \
     sim$(PATHSEP)sc_gear_stats.cpp \
@@ -66,6 +71,7 @@ SRC += \
     player$(PATHSEP)sc_item.cpp \
     player$(PATHSEP)sc_enchant.cpp \
     player$(PATHSEP)sc_consumable.cpp \
+    player$(PATHSEP)artifact_data.cpp \
     interfaces$(PATHSEP)sc_wowhead.cpp \
     interfaces$(PATHSEP)sc_js.cpp \
     interfaces$(PATHSEP)sc_http.cpp \

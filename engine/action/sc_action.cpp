@@ -235,10 +235,7 @@ struct action_execute_event_t : public player_event_t
     {
       // Action target must follow any potential pre-execute-state target if it differs from the
       // current (default) target of the action.
-      if ( target != action -> target )
-      {
-        action -> target = target;
-      }
+      action -> set_target( target );
       action -> execute();
     }
 
@@ -327,7 +324,9 @@ action_priority_t* action_priority_list_t::add_action( const player_t* p,
   const spell_data_t* s = p -> find_class_spell( name );
   if ( s == spell_data_t::not_found() )
     s = p -> find_specialization_spell( name );
-  return add_action( p, s, dbc::get_token( s -> id() ), action_options, comment );
+  std::string tokenized_name = s -> name_cstr();
+  util::tokenize( tokenized_name );
+  return add_action( p, s, tokenized_name, action_options, comment );
 }
 
 /**
@@ -348,8 +347,10 @@ action_priority_t* action_priority_list_t::add_talent( const player_t* p,
                                                        const std::string& action_options,
                                                        const std::string& comment )
 {
-  const spell_data_t* s = p -> find_talent_spell( name, "", SPEC_NONE, false, false );
-  return add_action( p, s, dbc::get_token( s -> id() ), action_options, comment );
+  const spell_data_t* s = p -> find_talent_spell( name, SPEC_NONE, false, false );
+  std::string tokenized_name = s -> name_cstr();
+  util::tokenize( tokenized_name );
+  return add_action( p, s, tokenized_name, action_options, comment );
 }
 
 action_t::options_t::options_t()
@@ -1640,7 +1641,7 @@ void action_t::assess_damage( dmg_e type, action_state_t* s )
   player -> assessor_out_damage.execute( type, s );
 
   // TODO: Should part of this move to assessing, priority_iteration_damage for example?
-  if ( s -> result_amount > 0 || result_is_miss( s -> result ) )
+  if ( s -> result_raw > 0 || result_is_miss( s -> result ) )
   {
     if ( s -> target == sim -> target )
     {
@@ -1684,7 +1685,19 @@ void action_t::queue_execute( bool off_gcd )
   {
     if ( off_gcd )
     {
-      do_off_gcd_execute( this );
+      // If the charge cooldown is recharging on the same timestamp, we need to create a zero-time
+      // event to execute the (queued) action, so that the charge cooldown can regenerate.
+      if ( cooldown -> charges > 1 && cooldown -> current_charge == 0 &&
+           cooldown -> recharge_event &&
+           cooldown -> recharge_event -> remains() == timespan_t::zero() )
+      {
+        queue_event = make_event<queued_action_execute_event_t>( *sim, this, timespan_t::zero(), off_gcd );
+        player -> queueing = this;
+      }
+      else
+      {
+        do_off_gcd_execute( this );
+      }
     }
     else
     {
@@ -1921,7 +1934,7 @@ bool action_t::ready()
       return false;
   }
 
-  if ( option.cycle_targets )
+  if ( option.cycle_targets && sim -> target_non_sleeping_list.size() > 1 )
   {
     player_t* saved_target = target;
     option.cycle_targets = false;
@@ -2145,7 +2158,7 @@ void action_t::init()
   {
     if ( harmful )
     {
-      if ( this -> travel_speed > 0 || this -> base_execute_time > timespan_t::zero() )
+      if ( this -> travel_time() > timespan_t::zero() || this -> base_execute_time > timespan_t::zero() )
       {
         player -> precombat_action_list.push_back( this );
       }
@@ -2263,9 +2276,8 @@ void action_t::reset()
     if( if_expr )
     {
       if_expr = if_expr -> optimize();
-      if ( sim -> optimize_expressions && if_expr -> always_false() )
+      if ( sim -> optimize_expressions && action_list && if_expr -> always_false() )
       {
-        assert( action_list );
         std::vector<action_t*>::iterator i = std::find( action_list -> foreground_action_list.begin(),
                                                         action_list -> foreground_action_list.end(),
                                                         this );
@@ -2788,7 +2800,7 @@ expr_t* action_t::create_expression( const std::string& name_str )
         {}
         virtual double evaluate() override
         {
-          if ( action.player -> last_foreground_action )
+          if ( prev && action.player -> last_foreground_action )
             return action.player -> last_foreground_action -> internal_id == prev -> internal_id;
           return false;
         }
@@ -2959,9 +2971,7 @@ expr_t* action_t::create_expression( const std::string& name_str )
       {}
       virtual double evaluate() override
       {
-        if ( ! previously_used )
-          return false;
-        if ( as<int>(action.player -> prev_gcd_actions.size()) >= gcd )
+        if ( previously_used && as<int>(action.player -> prev_gcd_actions.size()) >= gcd )
           return ( *( action.player -> prev_gcd_actions.end() - gcd ) ) -> internal_id == previously_used -> internal_id;
         return false;
       }

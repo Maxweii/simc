@@ -496,7 +496,13 @@ unsigned item_t::item_level() const
   if ( parsed.item_level > 0 )
     ilvl = parsed.item_level;
   else
+  {
     ilvl = parsed.data.level + upgrade_item_level();
+    if ( slot == player -> artifact -> slot() )
+    {
+      ilvl += player -> artifact -> ilevel_increase();
+    }
+  }
 
   if ( sim -> scale_to_itemlevel > 0 && sim -> scale_itemlevel_down_only )
     return std::min( (unsigned) sim -> scale_to_itemlevel, ilvl );
@@ -693,7 +699,7 @@ bool item_t::parse_options()
 
   if ( ! option_gem_id_str.empty() )
   {
-    std::vector<std::string> spl = util::string_split( option_gem_id_str, "/" );
+    std::vector<std::string> spl = util::string_split( option_gem_id_str, ":/" );
     for ( size_t i = 0, end = std::min( sizeof_array( parsed.gem_id ), spl.size() ); i < end; i++ )
     {
       unsigned gem_id = util::to_unsigned( spl[ i ] );
@@ -751,7 +757,7 @@ bool item_t::parse_options()
 
   if ( ! option_bonus_id_str.empty() )
   {
-    std::vector<std::string> split = util::string_split( option_bonus_id_str, "/" );
+    std::vector<std::string> split = util::string_split( option_bonus_id_str, "/:" );
     for (auto & elem : split)
     {
       int bonus_id = util::to_int( elem );
@@ -910,7 +916,7 @@ std::string item_t::encoded_item() const
   // With artifact, we need to output gems (relics). This probably would need a more thorough
   // checking but artifact doubtful will ever support normal gems, so there's not going to ever be a
   // "gems" option for them.
-  else if ( player -> artifact.slot == slot &&
+  else if ( player -> artifact -> slot() == slot &&
             range::find_if( parsed.gem_id, []( int id ) { return id != 0; } ) != parsed.gem_id.end() )
   {
     s << ",gem_id=";
@@ -1641,7 +1647,7 @@ bool item_t::decode_gems()
       parsed.gem_color[ i ] = enchant::initialize_gem( *this, i );
 
     // Socket bonus
-    if ( socket_color_match() )
+    if ( socket_color_match() && parsed.socket_bonus_stats.size() == 0 )
     {
       const item_enchantment_data_t& socket_bonus = player -> dbc.item_enchantment( parsed.data.id_socket_bonus );
       if ( ! enchant::initialize_item_enchant( *this, parsed.socket_bonus_stats, SPECIAL_EFFECT_SOURCE_SOCKET_BONUS, socket_bonus ) )

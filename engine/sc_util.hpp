@@ -15,6 +15,7 @@
 #include <vector>
 #include <string>
 #include <cstdarg>
+#include <chrono>
 
 // Forward declarations
 struct player_t;
@@ -124,7 +125,7 @@ bool socket_gem_match( item_socket_color socket, item_socket_color gem );
 double crit_multiplier( meta_gem_e gem );
 
 std::vector<std::string> string_split( const std::string& str, const std::string& delim );
-size_t string_split_allow_quotes( std::vector<std::string>& results, const std::string& str, const char* delim );
+std::vector<std::string> string_split_allow_quotes( std::string str, const char* delim );
 size_t string_split( const std::string& str, const char* delim, const char* format, ... );
 void string_strip_quotes( std::string& str );
 void replace_all( std::string& s, const std::string&, const std::string& );
@@ -152,7 +153,6 @@ std::string decode_html( const std::string& str );
 void urlencode( std::string& str );
 void urldecode( std::string& str );
 std::string uchar_to_hex( unsigned char );
-std::string google_image_chart_encode( const std::string& str );
 std::string create_blizzard_talent_url( const player_t& p );
 std::string create_wowhead_artifact_url( const player_t& p );
 
@@ -189,6 +189,14 @@ std::ostream& stream_printf( std::ostream&, const char* format, ... );
 template<class T>
 T from_string( const std::string& );
 
+template <class T>
+double duration_fp_seconds(const T& chrono_time)
+{
+  auto now = std::chrono::high_resolution_clock::now();
+
+  return std::chrono::duration<double, std::chrono::seconds::period>( now - chrono_time ).count();
+}
+
 template<>
 inline int from_string( const std::string& v )
 {
@@ -219,6 +227,20 @@ inline timespan_t from_string( const std::string& v )
 template<>
 inline std::string from_string( const std::string& v )
 {
+  return v;
+}
+
+// https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+inline unsigned next_power_of_two( unsigned v )
+{
+  v--;
+  v |= v >> 1;
+  v |= v >> 2;
+  v |= v >> 4;
+  v |= v >> 8;
+  v |= v >> 16;
+  v++;
+
   return v;
 }
 
@@ -260,3 +282,4 @@ T util::ability_rank( int player_level,
 template <typename T>
 std::string util::to_string( const T& t )
 { std::stringstream s; s << t; return s.str(); }
+

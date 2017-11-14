@@ -5,6 +5,7 @@
 
 #include "simulationcraft.hpp"
 #include "report/sc_highchart.hpp"
+#include "sc_profileset.hpp"
 #ifdef SC_WINDOWS
 #include <direct.h>
 #endif
@@ -981,14 +982,21 @@ struct sim_end_event_t : event_t
  */
 struct sim_safeguard_end_event_t : public sim_end_event_t
 {
+  timespan_t et;
+
   sim_safeguard_end_event_t( sim_t& s, timespan_t end_time ) :
-    sim_end_event_t( s, end_time )
+    sim_end_event_t( s, end_time ), et( end_time )
   { }
-  virtual const char* name() const override
+
+  const char* name() const override
   { return "sim_end_twice_expected_time"; }
-  virtual void execute() override
+
+  void execute() override
   {
-    sim().errorf( "Simulation has been forcefully cancelled at %.2f because twice the expected combat length has been exceeded.", sim().current_time().total_seconds() );
+    sim().errorf( "Simulation has been forcefully cancelled at %.3f (%.3f) because twice the "
+                  "expected combat length has been exceeded.",
+                  sim().current_time().total_seconds(),
+                  et.total_seconds() );
 
     sim_end_event_t::execute();
   }
@@ -1332,6 +1340,7 @@ sim_t::sim_t( sim_t* p, int index ) :
   current_mean( 0 ),
   analyze_error_interval( 100 ),
   analyze_number( 0 ),
+  cleanup_threads( false ),
   control( nullptr ),
   parent( p ),
   initialized( false ),
@@ -1394,6 +1403,7 @@ sim_t::sim_t( sim_t* p, int index ) :
   iteration_dmg( 0 ), priority_iteration_dmg( 0 ), iteration_heal( 0 ), iteration_absorb( 0 ),
   raid_dps(), total_dmg(), raid_hps(), total_heal(), total_absorb(), raid_aps(),
   simulation_length( "Simulation Length", false ),
+  merge_time( 0 ), init_time( 0 ), analyze_time( 0 ),
   report_iteration_data( 0.025 ), min_report_iteration_data( -1 ),
   report_progress( 1 ),
   bloodlust_percent( 25 ), bloodlust_time( timespan_t::from_seconds( 0.5 ) ),
@@ -1423,7 +1433,9 @@ sim_t::sim_t( sim_t* p, int index ) :
   chart_boxplot_percentile( .25 ),
   display_hotfixes( false ),
   disable_hotfixes( false ),
-  display_bonus_ids( false )
+  display_bonus_ids( false ),
+  profileset_metric( { SCALE_METRIC_DPS } ),
+  profileset_enabled( false )
 {
   item_db_sources.assign( std::begin( default_item_db_sources ),
                           std::end( default_item_db_sources ) );
@@ -1433,6 +1445,8 @@ sim_t::sim_t( sim_t* p, int index ) :
   use_optimal_buffs_and_debuffs( 1 );
 
   create_options();
+
+  profileset::create_options( this );
 
   if ( parent )
   {
@@ -1461,7 +1475,7 @@ sim_t::sim_t( sim_t* p, int index ) :
 
 sim_t::~sim_t()
 {
-  assert( relatives.empty() );
+  assert( ( requires_cleanup() && relatives.empty() ) || ! requires_cleanup() );
   if( parent )
     parent -> remove_relative( this );
 }
@@ -1542,6 +1556,8 @@ void sim_t::cancel()
   {
     relative -> cancel();
   }
+
+  profilesets.cancel();
 }
 
 // sim_t::interrupt =========================================================
@@ -1634,6 +1650,11 @@ void sim_t::reset()
   }
 
   raid_event_t::reset( this );
+
+  if ( expansion_data.pantheon_proxy )
+  {
+    expansion_data.pantheon_proxy -> reset();
+  }
 }
 
 /// Start combat.
@@ -1731,6 +1752,11 @@ void sim_t::combat_begin()
     target -> death_pct = enemy_death_pct;
   }
   make_event<sim_safeguard_end_event_t>( *this, *this, expected_iteration_time + expected_iteration_time );
+
+  if ( expansion_data.pantheon_proxy )
+  {
+    expansion_data.pantheon_proxy -> start();
+  }
 }
 
 // sim_t::combat_end ========================================================
@@ -2206,13 +2232,19 @@ bool sim_t::init_actor( player_t* p )
   p -> init_target();
   p -> init_character_properties();
 
+  // Artifact must be initialized before items, since in 7.3 crucible traits may increase the item
+  // level of the artifact (i.e., the increase must be included when items stats are calculated):w
+  if ( ! p -> init_artifact() )
+  {
+    return false;
+  }
+
   // Initialize each actor's items, construct gear information & stats
   if ( ! p -> init_items() )
   {
     return false;
   }
 
-  p -> init_artifact();
   p -> init_spells();
   p -> init_base_stats();
   p -> create_buffs();
@@ -2310,6 +2342,8 @@ bool sim_t::init_actor_pets()
 
 bool sim_t::init()
 {
+  auto start = std::chrono::high_resolution_clock::now();
+
   if ( initialized )
     return true;
 
@@ -2360,7 +2394,15 @@ bool sim_t::init()
   }
 
   // set scaling metric
-  scaling -> scaling_metric = util::parse_scale_metric( scaling -> scale_over );
+  if ( ! scaling -> scale_over.empty() )
+  {
+    scaling -> scaling_metric = util::parse_scale_metric( scaling -> scale_over );
+    if ( scaling -> scaling_metric == SCALE_METRIC_NONE )
+    {
+      errorf( "Unknown scaling metric '%s'", scaling -> scale_over.c_str() );
+      return false;
+    }
+  }
 
   // Find Already defined target, otherwise create a new one.
   if ( debug )
@@ -2481,7 +2523,11 @@ bool sim_t::init()
     }
   }
 
+  profilesets.initialize( this );
+
   initialized = true;
+
+  init_time = util::duration_fp_seconds( start );
 
   return canceled ? false : true;
 }
@@ -2491,13 +2537,22 @@ bool sim_t::init()
 
 void sim_t::analyze()
 {
+  auto start = std::chrono::high_resolution_clock::now();
+
   simulation_length.analyze();
   if ( simulation_length.mean() == 0 ) return;
 
   for ( size_t i = 0; i < buff_list.size(); ++i )
     buff_list[ i ] -> analyze();
 
-  std::cout << "Analyzing actor data ..." << std::endl;
+  if ( scaling -> scale_stat == STAT_NONE &&
+       scaling -> calculate_scale_factors == 0 &&
+       plot -> dps_plot_stat_str.empty() &&
+       reforge_plot -> reforge_plot_stat_str.empty() &&
+       profileset_map.size() == 0 && ! profileset_enabled )
+  {
+    std::cout << "Analyzing actor data ..." << std::endl;
+  }
 
   for ( size_t i = 0; i < actor_list.size(); i++ )
     actor_list[ i ] -> analyze( *this );
@@ -2513,6 +2568,8 @@ void sim_t::analyze()
   range::sort( targets_by_name, compare_name() );
 
   analyze_iteration_data();
+
+  analyze_time = util::duration_fp_seconds( start );
 }
 
 /**
@@ -2547,37 +2604,6 @@ void sim_t::analyze_iteration_data()
 }
 
 
-// sim_t::set_sim_phase ===================================================
-
-void sim_t::set_sim_base_str( const std::string& str )
-{
-  sim_progress_base_str = str;
-}
-
-void sim_t::update_sim_phase_str()
-{
-  // The two-split base / phase string for progressbar is only used in single actor batch for now.
-  if ( ! single_actor_batch )
-  {
-    return;
-  }
-
-  std::stringstream phase_str;
-
-  if ( progressbar_type == 0 )
-  {
-    phase_str << player_no_pet_list[ current_index ] -> name_str << " ";
-    phase_str << ( current_index + 1 ) << "/" << player_no_pet_list.size();
-  }
-  else
-  {
-    phase_str << player_no_pet_list[ current_index ] -> name_str << '\t';
-    phase_str << ( current_index + 1 ) << '\t' << player_no_pet_list.size();
-  }
-
-  sim_progress_phase_str = phase_str.str();
-}
-
 // sim_t::iterate ===========================================================
 
 bool sim_t::iterate()
@@ -2586,8 +2612,6 @@ bool sim_t::iterate()
     return false;
 
   progress_bar.init();
-
-  update_sim_phase_str();
 
   activate_actors();
 
@@ -2599,7 +2623,7 @@ bool sim_t::iterate()
 
     combat();
 
-    if ( progress_bar.update( false, current_index ) )
+    if ( progress_bar.update( false, as<int>(current_index) ) )
     {
       progress_bar.output( false );
     }
@@ -2613,7 +2637,9 @@ bool sim_t::iterate()
 
       if ( more_work && current_index != old_active )
       {
-        if ( ! parent || scaling -> scale_stat != STAT_NONE )
+        if ( ! parent ||
+             scaling -> scale_stat != STAT_NONE ||
+             ( parent && parent -> reforge_plot -> current_stat_combo > -1 ) )
         {
           progress_bar.update( true, static_cast<int>( old_active ) );
           progress_bar.output( true );
@@ -2625,7 +2651,7 @@ bool sim_t::iterate()
     }
   } while ( more_work && ! canceled );
 
-  if ( ! canceled && progress_bar.update( true, current_index ) )
+  if ( ! canceled && progress_bar.update( true, as<int>(current_index) ) )
   {
     progress_bar.output( true );
   }
@@ -2634,6 +2660,10 @@ bool sim_t::iterate()
   if ( single_actor_batch )
   {
     player_no_pet_list[ player_no_pet_list.size() - 1 ] -> deactivate();
+  }
+  else
+  {
+    progress_bar.restart();
   }
 
   reset();
@@ -2672,8 +2702,16 @@ void sim_t::do_pause()
 void sim_t::merge( sim_t& other_sim )
 {
   auto_lock_t auto_lock( merge_mutex );
+  auto start = std::chrono::high_resolution_clock::now();
 
-  std::cout << "Merging data from thread-" << other_sim.thread_index << " ..." << std::endl;
+  if ( scaling -> scale_stat == STAT_NONE &&
+       scaling -> calculate_scale_factors == 0 &&
+       plot -> dps_plot_stat_str.empty() &&
+       reforge_plot -> reforge_plot_stat_str.empty() &&
+       profileset_map.size() == 0 && ! profileset_enabled )
+  {
+    std::cout << "Merging data from thread-" << other_sim.thread_index << " ..." << std::endl;
+  }
 
   iterations += other_sim.iterations;
   work_per_thread[ other_sim.thread_index ] = other_sim.work_done;
@@ -2703,6 +2741,8 @@ void sim_t::merge( sim_t& other_sim )
   }
 
   range::append( iteration_data, other_sim.iteration_data );
+  merge_time += util::duration_fp_seconds( start );
+  init_time += other_sim.init_time;
 }
 
 /// merge all sims together
@@ -2722,7 +2762,10 @@ void sim_t::merge()
     {
       child -> join();
       children[ i ] = nullptr;
-      delete child;
+      if ( requires_cleanup() )
+      {
+        delete child;
+      }
     }
   }
 
@@ -2814,7 +2857,7 @@ bool sim_t::execute()
   elapsed_cpu  = util::cpu_time()  - start_cpu_time;
   elapsed_time = util::wall_time() - start_wall_time;
 
-  return true;
+  return success;
 }
 
 /// find player in sim by name
@@ -3057,6 +3100,7 @@ void sim_t::create_options()
 {
   // General
   add_option( opt_int( "iterations", iterations ) );
+  add_option( opt_bool( "cleanup_threads", cleanup_threads ) );
   add_option( opt_float( "target_error", target_error ) );
   add_option( opt_int( "analyze_error_interval", analyze_error_interval ) );
   add_option( opt_func( "process_priority", parse_process_priority ) );
@@ -3258,6 +3302,12 @@ void sim_t::create_options()
   // Legion
   add_option( opt_int( "legion.infernal_cinders_users", expansion_opts.infernal_cinders_users, 1, 20 ) );
   add_option( opt_int( "legion.engine_of_eradication_orbs", expansion_opts.engine_of_eradication_orbs, 0, 4 ) );
+  add_option( opt_int( "legion.void_stalkers_contract_targets", expansion_opts.void_stalkers_contract_targets ) );
+  add_option( opt_bool( "legion.feast_as_dps", expansion_opts.lavish_feast_as_dps ) );
+  add_option( opt_float( "legion.specter_of_betrayal_overlap", expansion_opts.specter_of_betrayal_overlap, 0, 1 ) );
+  add_option( opt_string( "legion.pantheon_trinket_users", expansion_opts.pantheon_trinket_users ) );
+  add_option( opt_timespan( "legion.pantheon_trinket_interval", expansion_opts.pantheon_trinket_interval ) );
+  add_option( opt_float( "legion.pantheon_trinket_interval_stddev", expansion_opts.pantheon_trinket_interval_stddev ) );
   add_option( opt_func( "legion.cradle_of_anguish_resets", []( sim_t* sim, const std::string&, const std::string& value ) {
     auto split = util::string_split( value, ":/," );
     range::for_each( split, [ sim ]( const std::string& str ) {
@@ -3791,8 +3841,13 @@ void sim_t::activate_actors()
 
     // Activate new actor
     player_no_pet_list[ current_index ] -> activate();
-    update_sim_phase_str();
+    if ( ! profileset_enabled )
+    {
+      progress_bar.set_phase( player_no_pet_list[ current_index ] -> name_str );
+    }
   }
+
+  progress_bar.progress();
 
   current_iteration = -1;
 }
@@ -3804,4 +3859,29 @@ bool sim_t::has_raid_event( const std::string& name ) const
   } );
 
   return it != raid_events.end();
+}
+
+// Determine when the main thread must clean up child threads (i.e., delete them)
+bool sim_t::requires_cleanup() const
+{
+  // .. if we are a profileset simulation
+  if ( profileset_enabled )
+  {
+    return true;
+  }
+
+  // .. if we are simulating a scale factor calculation
+  if ( scaling -> scale_stat != STAT_NONE )
+  {
+    return true;
+  }
+
+  // .. if we are simulating a reforge plot
+  if ( ! reforge_plot -> reforge_plot_stat_str.empty() )
+  {
+    return true;
+  }
+
+  // .. or finally, clean up child threads based on the "cleanup_threads" option value
+  return cleanup_threads;
 }

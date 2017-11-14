@@ -786,6 +786,8 @@ bool item_database::apply_item_bonus( item_t& item, const item_bonus_entry_t& en
       }
       break;
     }
+    // Blizzard scrapped the "additional traits" as bonuses to relics idea
+    /*
     case ITEM_BONUS_ADD_RANK:
     {
       auto player = item.player;
@@ -813,6 +815,7 @@ bool item_database::apply_item_bonus( item_t& item, const item_bonus_entry_t& en
         }
       }
     }
+    */
     default:
       break;
   }
@@ -1258,7 +1261,7 @@ bool item_database::parse_item_spell_enchant( item_t& item,
                es -> effectN( j + 1 ).subtype() == A_MOD_STAT &&
                es -> effectN( j + 1 ).misc_value1() == -1 )
           {
-            stats.push_back( stat_pair_t( STAT_ALL, es -> effectN( j + 1 ).base_value() ) );
+            stats.push_back( stat_pair_t( STAT_ALL, es -> effectN( j + 1 ).average( item.player ) ) );
             break;
           }
         }
@@ -1613,7 +1616,7 @@ std::string dbc::bonus_ids_str( dbc_t& dbc)
     if ( e -> type != ITEM_BONUS_ILEVEL && e -> type != ITEM_BONUS_MOD &&
          e -> type != ITEM_BONUS_SOCKET && e -> type != ITEM_BONUS_SCALING &&
          e -> type != ITEM_BONUS_SCALING_2 && e -> type != ITEM_BONUS_SET_ILEVEL &&
-         e -> type != ITEM_BONUS_ADD_RANK )
+         e -> type != ITEM_BONUS_ADD_RANK && e -> type != ITEM_BONUS_QUALITY )
     {
       e++;
       continue;

@@ -21,8 +21,15 @@ namespace /* ANONYMOUS NAMESPACE */
 static const enchant_db_item_t __enchant_db[] = {
 
   { nullptr,                         0    }
+
 };
 
+size_t enchant_map_key(const dbc_t& dbc, const item_enchantment_data_t& enchant)
+{
+  return static_cast<unsigned>(dbc.ptr) << 31 | enchant.id;
+}
+
+thread_local std::unordered_map<size_t, std::string> cached_enchant_names;
 } /* ANONYMOUS NAMESPACE */
 
 unsigned enchant::find_enchant_id( const std::string& name )
@@ -47,81 +54,113 @@ std::string enchant::find_enchant_name( unsigned enchant_id )
   return std::string();
 }
 
+namespace {
+	/**
+	* Return a "simc-encoded" enchant name for a given DBC item enchantment.
+	*
+	* This function simply encodes the item enchantment name (given in
+	* SpellItemEnchantment.dbc) that is exported to simc. Normal simc tokenization
+	* rules are applied on the enchant name, and any possible rank string (without
+	* the "rank) is applied as a suffix. Rank information is found in the spell
+	* that the enchant uses.
+	*
+	* Simc needs this information to save actor profiles with meaningful enchant
+	* names (if the enchant is not a stat enchant), instead of enchant ids. When a
+	* profile is loaded, the enchant name translates to a item enchantment entry
+	* in the DBC data through the enchant::find_item_enchant() function.
+	*
+	* TODO: In the off chance blizzard makes item enchants with 2 spell ids, that
+	* both have ranks, and there also is a "lower rank" item enchant of the same
+	* name, we need to somehow cover that case. Highly unlikely in practice.
+	*/
+	std::string _encoded_enchant_name(const dbc_t& dbc, const item_enchantment_data_t& enchant)
+	{
+		std::string enchant_name;
+		std::string enchant_rank_str;
+
+		const spell_data_t* enchant_source = dbc.spell(enchant.id_spell);
+		if (enchant_source->id() > 0)
+		{
+			enchant_name = enchant_source->name_cstr();
+			std::string::size_type enchant_pos = enchant_name.find("Enchant ");
+			std::string::size_type enchant_hyphen_pos = enchant_name.find("-");
+
+			// Cut out "Enchant XXX -" from the string, if it exists, also remove any 
+			// following whitespace. Consider that to be the enchant name. If "Enchant
+			// XXX -" is not found, just consider the linked spell's full name to be
+			// the enchant name.
+			if (enchant_pos != std::string::npos && enchant_hyphen_pos != std::string::npos &&
+				enchant_hyphen_pos > enchant_pos)
+			{
+				enchant_name = enchant_name.substr(enchant_hyphen_pos + 1);
+				while (enchant_name[0] == ' ')
+					enchant_name.erase(enchant_name.begin());
+			}
+
+			util::tokenize(enchant_name);
+
+			if (enchant_source->rank_str())
+				enchant_rank_str = enchant_source->rank_str();
+			util::tokenize(enchant_rank_str);
+		}
+		// Revert back to figuring out name based on pure item enchantment data. This
+		// will probably be wrong in many cases, but what can we do.
+		else
+		{
+			enchant_name = enchant.name;
+			util::tokenize(enchant_name);
+
+			for (size_t i = 0; i < sizeof_array(enchant.ench_prop); i++)
+			{
+				if (enchant.ench_prop[i] == 0 || enchant.ench_type[i] == 0)
+					continue;
+
+				if (dbc.spell(enchant.ench_prop[i])->rank_str())
+					enchant_rank_str = dbc.spell(enchant.ench_prop[i])->rank_str();
+				util::tokenize(enchant_rank_str);
+			}
+		}
+
+		// Erase "rank_"
+		std::string::size_type rank_offset = enchant_rank_str.find("rank_");
+		if (rank_offset != std::string::npos)
+			enchant_rank_str.erase(rank_offset, 5);
+
+		if (!enchant_rank_str.empty())
+			enchant_name += "_" + enchant_rank_str;
+
+		return enchant_name;
+	}
+}
 /**
- * Return a "simc-encoded" enchant name for a given DBC item enchantment.
- *
- * This function simply encodes the item enchantment name (given in
- * SpellItemEnchantment.dbc) that is exported to simc. Normal simc tokenization
- * rules are applied on the enchant name, and any possible rank string (without
- * the "rank) is applied as a suffix. Rank information is found in the spell
- * that the enchant uses.
- *
- * Simc needs this information to save actor profiles with meaningful enchant
- * names (if the enchant is not a stat enchant), instead of enchant ids. When a
- * profile is loaded, the enchant name translates to a item enchantment entry
- * in the DBC data through the enchant::find_item_enchant() function.
- *
- * TODO: In the off chance blizzard makes item enchants with 2 spell ids, that
- * both have ranks, and there also is a "lower rank" item enchant of the same
- * name, we need to somehow cover that case. Highly unlikely in practice.
- */
+* Return a "simc-encoded" enchant name for a given DBC item enchantment.
+*
+* This function simply encodes the item enchantment name (given in
+* SpellItemEnchantment.dbc) that is exported to simc. Normal simc tokenization
+* rules are applied on the enchant name, and any possible rank string (without
+* the "rank) is applied as a suffix. Rank information is found in the spell
+* that the enchant uses.
+*
+* Simc needs this information to save actor profiles with meaningful enchant
+* names (if the enchant is not a stat enchant), instead of enchant ids. When a
+* profile is loaded, the enchant name translates to a item enchantment entry
+* in the DBC data through the enchant::find_item_enchant() function.
+*
+* TODO: In the off chance blizzard makes item enchants with 2 spell ids, that
+* both have ranks, and there also is a "lower rank" item enchant of the same
+* name, we need to somehow cover that case. Highly unlikely in practice.
+*/
 std::string enchant::encoded_enchant_name( const dbc_t& dbc, const item_enchantment_data_t& enchant )
 {
-  std::string enchant_name;
-  std::string enchant_rank_str;
-
-  const spell_data_t* enchant_source = dbc.spell( enchant.id_spell );
-  if ( enchant_source -> id() > 0 )
+  auto key = enchant_map_key( dbc, enchant );
+  auto it = cached_enchant_names.find( key );
+  if ( it != cached_enchant_names.end() )
   {
-    enchant_name = enchant_source -> name_cstr();
-    std::string::size_type enchant_pos = enchant_name.find( "Enchant " );
-    std::string::size_type enchant_hyphen_pos = enchant_name.find( "-" );
-
-    // Cut out "Enchant XXX -" from the string, if it exists, also remove any 
-    // following whitespace. Consider that to be the enchant name. If "Enchant
-    // XXX -" is not found, just consider the linked spell's full name to be
-    // the enchant name.
-    if ( enchant_pos != std::string::npos && enchant_hyphen_pos != std::string::npos &&
-         enchant_hyphen_pos > enchant_pos )
-    {
-      enchant_name = enchant_name.substr( enchant_hyphen_pos + 1 );
-      while ( enchant_name[ 0 ] == ' ' )
-        enchant_name.erase( enchant_name.begin() );
-    }
-
-    util::tokenize( enchant_name );
-
-    if ( enchant_source -> rank_str() )
-      enchant_rank_str = enchant_source -> rank_str();
-    util::tokenize( enchant_rank_str );
+    return ( *it ).second;
   }
-  // Revert back to figuring out name based on pure item enchantment data. This
-  // will probably be wrong in many cases, but what can we do.
-  else
-  {
-    enchant_name = enchant.name;
-    util::tokenize( enchant_name );
-
-    for ( size_t i = 0; i < sizeof_array( enchant.ench_prop ); i++ )
-    {
-      if ( enchant.ench_prop[ i ] == 0 || enchant.ench_type[ i ] == 0 )
-        continue;
-
-      if ( dbc.spell( enchant.ench_prop[ i ] ) -> rank_str() )
-        enchant_rank_str = dbc.spell( enchant.ench_prop[ i ] ) -> rank_str();
-      util::tokenize( enchant_rank_str );
-    }
-  }
-
-  // Erase "rank_"
-  std::string::size_type rank_offset = enchant_rank_str.find( "rank_" );
-  if ( rank_offset != std::string::npos )
-    enchant_rank_str.erase( rank_offset, 5 );
-
-  if ( ! enchant_rank_str.empty() )
-    enchant_name += "_" + enchant_rank_str;
-
-  return enchant_name;
+  auto name = _encoded_enchant_name( dbc, enchant );
+  cached_enchant_names[key] = name;
+  return name;
 }
 
 /**
@@ -507,11 +546,6 @@ item_socket_color enchant::initialize_relic( item_t&                    item,
   } );
 
   auto powers = item.player -> dbc.artifact_powers( item.parsed.data.id_artifact );
-  // If the artifact= option already specified relics, we presume that the added ranks are
-  // already in the artifact powers provided by artifact= option.
-  bool has_relics = std::count( item.player -> artifact.relics.begin(),
-                                item.player -> artifact.relics.end(), 0 ) !=
-                    as<int>( item.player -> artifact.relics.size() );
 
   for ( size_t i = 0, end = sizeof_array( data.ench_type ); i < end; ++i )
   {
@@ -538,7 +572,9 @@ item_socket_color enchant::initialize_relic( item_t&                    item,
       }
       case ITEM_ENCHANTMENT_RELIC_RANK:
       {
-        if ( has_relics || data.ench_amount[ i ] <= 0 )
+        // If the artifact= option already specified relics, we presume that the added ranks are
+        // already in the artifact powers provided by artifact= option.
+        if ( item.player -> artifact -> has_relic_options() || data.ench_amount[ i ] <= 0 )
         {
           break;
         }
@@ -559,11 +595,8 @@ item_socket_color enchant::initialize_relic( item_t&                    item,
             item.player -> name(), relic.name(), data.ench_amount[ i ], ( *power_it ) -> name );
         }
 
-        // Our internal artifact power data is organized in ascending power id order (per artifact),
-        // so we need to map the blizzard's indexing system to our own (seemingly arbitrary indexing
-        // based on development cycle).
-        auto internal_power_index = std::distance( powers.begin(), power_it );
-        item.player -> artifact.add_bonus_rank( internal_power_index, data.ench_amount[ i ] );
+        item.player -> artifact -> add_relic( relic_idx, relic_id,
+                                              ( *power_it ) -> id, data.ench_amount[ i ] );
         break;
       }
       default:

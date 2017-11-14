@@ -14,6 +14,7 @@
 #include <vector>
 #include <memory>
 #include <cstring>
+#include <sstream>
 
 #include "sc_timespan.hpp"
 
@@ -29,7 +30,16 @@ public:
 { }
   virtual ~option_t() { }
   bool parse_option( sim_t* sim , const std::string& n, const std::string& value ) const
-  { return parse( sim, n, value ); }
+  {
+    try {
+      return parse( sim, n, value );
+    }
+    catch ( const std::exception& e) {
+      std::stringstream s;
+      s << "Could not parse option '" << n << "' with value '" << value << "': " << e.what();
+      throw std::invalid_argument(s.str());
+    }
+  }
   std::string name() const
   { return _name; }
   std::ostream& print_option( std::ostream& stream ) const
@@ -45,6 +55,7 @@ private:
 namespace opts {
 
 typedef std::unordered_map<std::string, std::string> map_t;
+typedef std::unordered_map<std::string, std::vector<std::string>> map_list_t;
 typedef std::function<bool(sim_t*,const std::string&, const std::string&)> function_t;
 typedef std::vector<std::string> list_t;
 bool parse( sim_t*, const std::vector<std::unique_ptr<option_t>>&, const std::string& name, const std::string& value );
@@ -69,6 +80,7 @@ std::unique_ptr<option_t> opt_timespan( const std::string& n, timespan_t& v );
 std::unique_ptr<option_t> opt_timespan( const std::string& n, timespan_t& v, timespan_t , timespan_t  );
 std::unique_ptr<option_t> opt_list( const std::string& n, opts::list_t& v );
 std::unique_ptr<option_t> opt_map( const std::string& n, opts::map_t& v );
+std::unique_ptr<option_t> opt_map_list( const std::string& n, opts::map_list_t& v );
 std::unique_ptr<option_t> opt_func( const std::string& n, const opts::function_t& f );
 std::unique_ptr<option_t> opt_deprecated( const std::string& n, const std::string& new_option );
 

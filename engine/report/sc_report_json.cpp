@@ -55,9 +55,6 @@ void add_non_zero( JsonOutput root, const char* name, const timespan_t& v )
 void add_non_zero( JsonOutput root, const char* name, double v )
 { add_non_default( root, name, v, 0.0 ); }
 
-void add_non_zero( JsonOutput root, const char* name, unsigned v )
-{ add_non_default( root, name, v, 0U ); }
-
 void add_non_zero( JsonOutput root, const char* name, int v )
 { add_non_default( root, name, v, 0 ); }
 
@@ -317,7 +314,7 @@ void to_json( JsonOutput root, const buff_t* b )
 void buffs_to_json( JsonOutput root, const player_t& p )
 {
   root.make_array();
-  range::for_each( p.buff_list, [ &root, &p ]( const buff_t* b ) {
+  range::for_each( p.buff_list, [ &root]( const buff_t* b ) {
     if ( b -> avg_start.mean() == 0 )
     {
       return;
@@ -704,7 +701,7 @@ void to_json( JsonOutput root,
 
     auto resources = json[ "resources" ];
     auto resources_max = json[ "resources_max" ];
-    range::for_each( relevant_resources, [ &json, &resources, &resources_max, &entry ]( resource_e r ) {
+    range::for_each( relevant_resources, [ &resources, &resources_max, &entry ]( resource_e r ) {
       resources[ util::resource_type_string( r ) ] = entry -> resource_snapshot[ r ];
       // TODO: Why do we have this instead of using some static one?
       resources_max[ util::resource_type_string( r ) ] = entry -> resource_max_snapshot[ r ];
@@ -848,7 +845,7 @@ void collected_data_to_json( JsonOutput root, const player_t& p )
     } );
 
     // Stat timelines, if they exist
-    range::for_each( cd.stat_timelines, [ &root, &cd ]( const player_collected_data_t::stat_timeline_t& stl ) {
+    range::for_each( cd.stat_timelines, [ &root]( const player_collected_data_t::stat_timeline_t& stl ) {
       add_non_zero( root[ "stat_timelines" ], util::stat_type_string( stl.type ), stl.timeline );
     } );
 
@@ -1096,16 +1093,72 @@ void scale_factors_to_json( JsonOutput root, const player_t& p )
   }
 }
 
+void scale_factors_all_to_json( JsonOutput root, const player_t& p )
+{
+  if ( p.sim -> report_precision < 0 )
+    p.sim -> report_precision = 2;
+
+  for ( scale_metric_e sm = SCALE_METRIC_DPS; sm < SCALE_METRIC_MAX; sm++ )
+  {
+    auto node = root[ util::scale_metric_type_abbrev( sm ) ];
+
+    const auto& sf = ( p.sim -> scaling -> normalize_scale_factors )
+                    ? p.scaling->scaling_normalized[ sm ]
+                    : p.scaling->scaling[ sm ];
+
+    for ( stat_e i = STAT_NONE; i < STAT_MAX; i++ )
+    {
+      if ( p.scaling->scales_with[ i ] )
+      {
+        node[ util::stat_type_abbrev( i ) ] = sf.get_stat( i );
+      }
+    }
+  }
+}
+
+void talents_to_json( JsonOutput root, const player_t& p )
+{
+  root.make_array();
+
+  for ( auto talent_row = 0; talent_row < MAX_TALENT_ROWS; talent_row++ )
+  {
+    auto talent_col = p.talent_points.choice( talent_row );
+    if ( talent_col == -1 )
+    {
+      continue;
+    }
+
+    auto talent_data = talent_data_t::find( p.type, talent_row, talent_col, p.specialization(), p.dbc.ptr );
+    if ( talent_data == nullptr )
+    {
+      continue;
+    }
+
+    auto entry = root.add();
+    entry[ "tier"     ] = talent_row + 1;
+    entry[ "id"       ] = talent_data -> id();
+    entry[ "spell_id" ] = talent_data -> spell_id();
+    entry[ "name"     ] = talent_data -> name_cstr();
+  }
+}
+
 void to_json( JsonOutput& arr, const player_t& p )
 {
   auto root = arr.add(); // Add a fresh object to the players array and use it as root
 
   root[ "name" ] = p.name();
   root[ "race" ] = util::race_type_string( p.race );
+  root[ "level" ] = p.true_level;
   root[ "role" ] = util::role_type_string( p.role );
   root[ "specialization" ] = util::specialization_string( p.specialization() );
 
-  root[ "level" ] = p.true_level;
+  talents_to_json( root[ "talents" ], p );
+
+  if ( p.artifact && p.artifact -> purchased_points() > 0 )
+  {
+    p.artifact -> generate_report( root[ "artifact" ] );
+  }
+
   root[ "party" ] = p.party;
   root[ "ready_type" ] = p.ready_type;
   root[ "bugs" ] = p.bugs;
@@ -1173,6 +1226,7 @@ void to_json( JsonOutput& arr, const player_t& p )
   if ( p.sim -> scaling -> has_scale_factors() )
   {
     scale_factors_to_json( root[ "scale_factors" ], p );
+    scale_factors_all_to_json( root[ "scale_factors_all" ], p );
   }
 
   collected_data_to_json( root[ "collected_data" ], p );
@@ -1498,6 +1552,26 @@ void to_json( JsonOutput root, const sim_t& sim )
     to_json( players_arr, *p );
   } );
 
+  if ( sim.profilesets.n_profilesets() > 0 )
+  {
+    auto profileset_root = root[ "profilesets" ];
+    sim.profilesets.output( sim, profileset_root );
+  }
+
+  auto stats_root = root[ "statistics" ];
+  stats_root[ "elapsed_cpu_seconds" ] = sim.elapsed_cpu;
+  stats_root[ "elapsed_time_seconds" ] = sim.elapsed_time;
+  stats_root[ "init_time_seconds" ] = sim.init_time;
+  stats_root[ "merge_time_seconds" ] = sim.merge_time;
+  stats_root[ "analyze_time_seconds" ] = sim.analyze_time;
+  stats_root[ "simulation_length" ] = sim.simulation_length;
+  add_non_zero( stats_root, "raid_dps", sim.raid_dps );
+  add_non_zero( stats_root, "raid_hps", sim.raid_hps );
+  add_non_zero( stats_root, "raid_aps", sim.raid_aps );
+  add_non_zero( stats_root, "total_dmg", sim.total_dmg );
+  add_non_zero( stats_root, "total_heal", sim.total_heal );
+  add_non_zero( stats_root, "total_absorb", sim.total_absorb );
+
   if ( sim.report_details != 0 )
   {
     // Targets
@@ -1528,17 +1602,6 @@ void to_json( JsonOutput root, const sim_t& sim )
         to_json( buffs_arr.add(), b );
       } );
     }
-
-    auto stats_root = root[ "statistics" ];
-    stats_root[ "elapsed_cpu_seconds" ] = sim.elapsed_cpu;
-    stats_root[ "elapsed_time_seconds" ] = sim.elapsed_time;
-    stats_root[ "simulation_length" ] = sim.simulation_length;
-    add_non_zero( stats_root, "raid_dps", sim.raid_dps );
-    add_non_zero( stats_root, "raid_hps", sim.raid_hps );
-    add_non_zero( stats_root, "raid_aps", sim.raid_aps );
-    add_non_zero( stats_root, "total_dmg", sim.total_dmg );
-    add_non_zero( stats_root, "total_heal", sim.total_heal );
-    add_non_zero( stats_root, "total_absorb", sim.total_absorb );
 
     if ( sim.low_iteration_data.size() > 0 )
     {
@@ -1739,6 +1802,11 @@ void print_json( sim_t& sim )
     try
     {
       Timer t( "JSON report" );
+      if ( ! sim.profileset_enabled )
+      {
+        t.start();
+      }
+
       print_json_pretty( s, sim );
     }
     catch ( const std::exception& e )
@@ -1762,6 +1830,10 @@ void print_json( sim_t& sim )
     try
     {
       Timer t( "JSON-New report" );
+      if ( ! sim.profileset_enabled )
+      {
+        t.start();
+      }
       print_json2_pretty( s, sim );
     }
     catch ( const std::exception& e )

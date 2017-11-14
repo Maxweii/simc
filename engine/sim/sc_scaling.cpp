@@ -114,7 +114,7 @@ scaling_t::scaling_t( sim_t* s ) :
   current_scaling_stat( STAT_NONE ),
   num_scaling_stats( 0 ),
   remaining_scaling_stats( 0 ),
-  scale_over(), scaling_metric( SCALE_METRIC_NONE ), scale_over_player()
+  scale_over(), scaling_metric( SCALE_METRIC_DPS ), scale_over_player()
 {
   create_options();
 }
@@ -234,7 +234,7 @@ void scaling_t::analyze_stats()
     delta_sim = new sim_t( sim );
     mutex.unlock();
 
-    delta_sim -> set_sim_base_str( util::stat_type_abbrev( stat ) );
+    delta_sim -> progress_bar.set_base( util::stat_type_abbrev( stat ) );
 
     delta_sim -> scaling -> scale_stat = stat;
     delta_sim -> scaling -> scale_value = +scale_delta / ( center ? 2 : 1 );
@@ -246,7 +246,7 @@ void scaling_t::analyze_stats()
       ref_sim = new sim_t( sim );
       mutex.unlock();
 
-      ref_sim -> set_sim_base_str( std::string( "Ref " ) + util::stat_type_abbrev( stat ) );
+      ref_sim -> progress_bar.set_base( std::string( "Ref " ) + util::stat_type_abbrev( stat ) );
 
       ref_sim -> scaling -> scale_stat = stat;
       ref_sim -> scaling -> scale_value = center ? -( scale_delta / 2 ) : 0;

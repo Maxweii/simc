@@ -12,6 +12,16 @@ struct proc_map_t
   const char* proc;
 };
 
+std::vector<std::string> _school_map = {
+  "Physical",
+  "Holy",
+  "Fire",
+  "Nature",
+  "Frost",
+  "Shadow",
+  "Arcane",
+};
+
 std::vector<std::string> _hotfix_effect_map = {
   "Id",
   "", // Hotfix field
@@ -377,25 +387,27 @@ static const std::unordered_map<int, const std::string> _resource_strings =
 };
 
 const std::map<unsigned, std::string> _attribute_strings = {
-  {   1, "Ranged Ability"           },
-  {   5, "Tradeskill ability"       },
-  {   6, "Passive"                  },
-  {   7, "Hidden"                   },
-  {  17, "Requires stealth"         },
-  {  20, "Stop attacks"             },
-  {  21, "Cannot dodge/parry/block" },
-  {  28, "Cannot be used in combat" },
-  {  31, "Cannot cancel aura"       },
-  {  34, "Channeled"                },
-  {  37, "Does not break stealth"   },
-  {  38, "Channeled"                },
-  {  93, "Cannot crit"              },
-  {  95, "Food buff"                },
-  { 105, "Not a proc"               },
-  { 112, "Disable player procs"     },
-  { 113, "Disable target procs"     },
-  { 151, "Disable weapon procs"     },
-  { 186, "Requires line of sight"   },
+  {   1, "Ranged Ability"                    },
+  {   5, "Tradeskill ability"                },
+  {   6, "Passive"                           },
+  {   7, "Hidden"                            },
+  {  17, "Requires stealth"                  },
+  {  20, "Stop attacks"                      },
+  {  21, "Cannot dodge/parry/block"          },
+  {  28, "Cannot be used in combat"          },
+  {  31, "Cannot cancel aura"                },
+  {  34, "Channeled"                         },
+  {  37, "Does not break stealth"            },
+  {  38, "Channeled"                         },
+  {  93, "Cannot crit"                       },
+  {  95, "Food buff"                         },
+  { 105, "Not a proc"                        },
+  { 112, "Disable player procs"              },
+  { 113, "Disable target procs"              },
+  { 151, "Disable weapon procs"              },
+  { 173, "Periodic effect affected by haste" },
+  { 186, "Requires line of sight"            },
+  { 221, "Disable player multipliers"        },
 };
 
 static const std::unordered_map<int, const std::string> _property_type_strings =
@@ -604,6 +616,7 @@ static const std::unordered_map<unsigned, const std::string> _effect_subtype_str
   { 138, "Modify Melee Haste%"                    },
   { 140, "Modify Ranged Haste%"                   },
   { 142, "Modify Base Resistance"                 },
+  { 166, "Modify Attack Power%"                   },
   { 187, "Modify Attacker Melee Crit Chance"      },
   { 189, "Modify Rating"                          },
   { 192, "Modify Ranged and Melee Haste%"         },
@@ -913,6 +926,40 @@ std::ostringstream& spell_info::effect_to_str( const dbc_t& dbc,
   }
 
   s << std::endl;
+
+  if ( e -> type() == E_APPLY_AURA && e -> subtype() == A_MOD_DAMAGE_PERCENT_DONE &&
+       e -> misc_value1() != 0 )
+  {
+    s << "                   Affected School(s): ";
+    if ( e -> misc_value1() == 0x7f )
+    {
+      s << "All";
+    }
+    else
+    {
+      std::vector<std::string> schools;
+      for ( size_t i = 0; i < _school_map.size(); ++i )
+      {
+        if ( e -> misc_value1() & ( 1 << i ) )
+        {
+          schools.push_back( _school_map[ i ] );
+        }
+      }
+
+      for ( size_t i = 0; i < schools.size(); ++i )
+      {
+        s << schools[ i ];
+
+        if ( i < schools.size() - 1 )
+        {
+          s << ", ";
+        }
+      }
+    }
+
+    s << std::endl;
+  }
+
 
   std::vector< const spell_data_t* > affected_spells = dbc.effect_affects_spells( spell -> class_family(), e );
   if ( affected_spells.size() > 0 )
@@ -1334,11 +1381,18 @@ std::string spell_info::to_str( const dbc_t& dbc, const spell_data_t* spell, int
     auto powers = dbc.artifact_power_ranks( spell -> power_id() );
     auto power_data = dbc.artifact_power( spell -> power_id() );
     s << "Artifact Power   : Id: " << spell -> power_id();
-    if ( power_data )
+    if ( power_data && power_data -> power_index != 0 )
     {
       s << ", Index: " << power_data -> power_index;
     }
-    s << ", Max Rank: " << ( powers.back() -> index() + 1 );
+    if ( powers.size() > 0 )
+    {
+      s << ", Max Rank: " << ( powers.back() -> index() + 1 );
+    }
+    if ( power_data )
+    {
+      s << ", Type: " << power_data -> power_type;
+    }
     if ( powers.size() > 1 )
     {
       std::vector<std::string> artifact_hotfixes;
